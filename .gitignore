@@ -1,0 +1,55 @@
+node_modules/
+dist/
+
+# Local Siteflow state and test homes
+.siteflow/
+.siteflow-test/
+.siteflow-*/
+
+# OS/editor artifacts
+.DS_Store
+*.log
+
+# Package artifacts
+*.tgz
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Browser/session/private artifacts
+receipts/
+traces/
+trace/
+*.trace
+*.har
+*.cookies.json
+*cookies*.json
+*cookie*.json
+*session*.json
+browser-profile/
+profiles/
+
+# Captured media and screenshots
+screenshots/
+*screenshot*.png
+*screenshot*.jpg
+*screenshot*.jpeg
+*screenshot*.webp
+*.webm
+*.mp4
+*.mov
+
+# Download/campaign outputs
+downloads/
+campaigns/
+telegram-analysis/
+rouman5_reader/
+
+# Local Python/utility envs
+.venv*/

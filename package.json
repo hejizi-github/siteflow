@@ -1,0 +1,46 @@
+{
+  "name": "siteflow-cli",
+  "version": "0.1.0",
+  "description": "Reusable site workflows powered by a local browser kernel",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "siteflow": "dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs",
+    "examples/receipts",
+    "assets/readme"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli/main.js",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "npm run build && node --test test/unit/**/*.test.mjs",
+    "prepack": "npm run build",
+    "pack:local": "npm pack",
+    "start": "node dist/cli/main.js"
+  },
+  "keywords": [
+    "browser",
+    "automation",
+    "playwright",
+    "cdp",
+    "site-workflows"
+  ],
+  "dependencies": {
+    "commander": "^14.0.2",
+    "playwright": "^1.56.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.8.1",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

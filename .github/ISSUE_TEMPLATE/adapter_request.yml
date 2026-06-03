@@ -1,0 +1,41 @@
+name: Site adapter request
+description: Request a new read-only or human-reviewed Siteflow adapter.
+title: "adapter: "
+labels: [adapter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adapter requests must stay within user-authorized and platform-safe automation. Do not request CAPTCHA bypass, DRM bypass, paywall bypass, credential harvesting, or abuse automation.
+  - type: input
+    id: site
+    attributes:
+      label: Site
+      placeholder: example.com
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What repeatable workflow should the adapter expose?
+      placeholder: Search public listings, collect visible metadata, detect login/challenge state, export structured receipt...
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Workflow type
+      options:
+        - Read-only public data
+        - Logged-in user-authorized data
+        - Draft or generation flow with human review
+        - Download flow requiring explicit user intent
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Public examples
+      description: Share public URLs only. Do not share cookies, tokens, private pages, or screenshots with personal data.

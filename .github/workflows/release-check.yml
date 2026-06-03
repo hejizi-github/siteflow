@@ -1,0 +1,52 @@
+name: Release Check
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release-check:
+    name: Build and inspect npm package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Pack
+        run: npm pack --dry-run
+
+      - name: Assert package privacy boundary
+        run: |
+          npm pack --json > /tmp/siteflow-pack.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const data = JSON.parse(fs.readFileSync('/tmp/siteflow-pack.json', 'utf8'));
+          const files = data[0].files.map(file => file.path);
+          const allowed = [/^examples\\/receipts\\//];
+          const forbidden = [/cookie/i, /receipt/i, /trace/i, /campaign/i, /profile/i, /\.env/i, /\.har$/i];
+          const offenders = files.filter(file => !allowed.some(pattern => pattern.test(file)) && forbidden.some(pattern => pattern.test(file)));
+          if (offenders.length) {
+            console.error('Forbidden package files:', offenders.join('\n'));
+            process.exit(1);
+          }
+          NODE

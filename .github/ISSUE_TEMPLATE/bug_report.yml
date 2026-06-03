@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible Siteflow bug without sharing private browser data.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not upload cookies, browser profiles, raw trace files, HAR files, screenshots with private data, or network dumps containing credentials.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened? What did you expect?
+      placeholder: siteflow --json ... returned ... but I expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Use example.com or a public page when possible.
+      placeholder: |
+        1. Run `siteflow --json daemon start`
+        2. Run `siteflow --json browser open https://example.com`
+        3. Run ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Redacted output
+      description: Paste only redacted JSON or error text. Replace secrets with [REDACTED].
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: siteflow --version
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - CLI
+        - Daemon
+        - Browser Kernel
+        - Site adapter
+        - Auth/Cookies
+        - Network/Trace
+        - Packaging
+        - Other
+    validations:
+      required: true
