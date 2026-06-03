@@ -7,7 +7,6 @@ const repoRoot = path.resolve(new URL('../../', import.meta.url).pathname);
 const sitesDir = path.join(repoRoot, 'src/sites');
 const allowedDirectClientImports = new Set([
   'src/sites/capabilities.ts',
-  'src/sites/helpers.ts',
   'src/sites/runner.ts',
 ]);
 
@@ -29,7 +28,6 @@ test('direct daemon client imports stay within the explicit allowlist', () => {
 });
 
 test('site adapters use the capabilities facade instead of helper internals', () => {
-  const allowedHelperImports = new Set(['src/sites/capabilities.ts']);
   const found = [];
   for (const entry of fs.readdirSync(sitesDir)) {
     if (!entry.endsWith('.ts')) continue;
@@ -42,7 +40,13 @@ test('site adapters use the capabilities facade instead of helper internals', ()
   }
 
   found.sort();
-  assert.deepEqual(found, [...allowedHelperImports].sort());
+  assert.deepEqual(found, []);
+});
+
+test('legacy helper module remains a compatibility shim over capabilities', () => {
+  const source = fs.readFileSync(path.join(sitesDir, 'helpers.ts'), 'utf8');
+  assert.equal(source.includes("from '../daemon/client.js'"), false);
+  assert.equal(source.includes("from './capabilities.js'"), true);
 });
 
 
