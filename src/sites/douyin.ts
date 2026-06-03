@@ -67,8 +67,9 @@ async function openUploadPage(profile: string): Promise<void> {
 }
 
 function isAuthRequired(text: string, url: string): boolean {
-  const hasCreatorShell = /抖音创作者中心|抖音创作服务平台|作品管理|数据中心|创作中心/.test(text);
-  return url.includes('/login') || (/扫码|验证码|手机号登录/.test(text) || text.includes('登录')) && !hasCreatorShell;
+  const loginSignals = /扫码|验证码|手机号登录|发送验证码|登录即同意|创作者专属功能/.test(text) || text.includes('登 录') || text.includes('登录');
+  const authenticatedSignals = /发布视频|发布图文|发布文章|发布全景视频|你还有上次未发布的/.test(text);
+  return url.includes('/login') || (loginSignals && !authenticatedSignals);
 }
 
 function toLimit(value: string | undefined, fallback = 20, max = 100): number {
@@ -755,6 +756,11 @@ async function runArticlePublish(ctx: SiteCommandContext, options: DouyinArticle
   const receipt = await runArticleDraft(ctx, { ...options, publish: true, saveDraft: false });
   return { ...receipt, command: 'article' };
 }
+
+export const douyinTesting = {
+  isAuthRequired,
+};
+
 
 export const douyinAdapter: SiteAdapter = {
   id: 'douyin',

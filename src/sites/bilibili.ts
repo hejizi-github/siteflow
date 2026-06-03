@@ -1,8 +1,7 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression } from './capabilities.js';
-import { sleep } from './capabilities.js';
+import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { addPageIdOption, clampInt, fetchJson, openOrNavigate, siteReceipt } from './http-utils.js';
+import { clampInt, fetchJson, siteReceipt } from './http-utils.js';
 
 const SITE = 'bilibili';
 const ORIGIN = 'https://www.bilibili.com';
@@ -24,7 +23,7 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
   const limit = clampInt(options.limit, 20, 1, 50);
   const pageNum = clampInt(options.page, 1, 1, 50);
   const url = `https://search.bilibili.com/all?keyword=${encodeURIComponent(options.keyword)}&page=${pageNum}`;
-  const page = await openOrNavigate(ctx, url, options.pageId);
+  const page = await openOrNavigateSitePage(ctx.profile, url, options.pageId);
   await sleep(1800);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
@@ -103,7 +102,7 @@ async function runComments(_ctx: SiteCommandContext, options: CommentsOptions): 
 }
 
 async function runCreator(ctx: SiteCommandContext, options: CreatorOptions): Promise<SiteReceipt> {
-  const page = await openOrNavigate(ctx, `https://space.bilibili.com/${encodeURIComponent(options.mid)}`, options.pageId);
+  const page = await openOrNavigateSitePage(ctx.profile, `https://space.bilibili.com/${encodeURIComponent(options.mid)}`, options.pageId);
   await sleep(1800);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
@@ -124,7 +123,7 @@ export const bilibiliAdapter: SiteAdapter = {
   description: 'Read-only Bilibili search, video metadata, comments, and creator probes.',
   commands: [
     { name: 'search', description: 'Search Bilibili videos through the rendered page', configure(command: Command): void {
-      addPageIdOption(command.argument('<keyword>').option('--page <n>', 'page number', '1').option('--limit <n>', 'number of videos', '20')).action(async function (keyword: string) {
+      addSitePageIdOption(command.argument('<keyword>').option('--page <n>', 'page number', '1').option('--limit <n>', 'number of videos', '20')).action(async function (keyword: string) {
         const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
       });
@@ -142,7 +141,7 @@ export const bilibiliAdapter: SiteAdapter = {
       });
     } },
     { name: 'creator', description: 'Probe Bilibili creator metadata by mid', configure(command: Command): void {
-      addPageIdOption(command.argument('<mid>')).action(async function (mid: string) {
+      addSitePageIdOption(command.argument('<mid>')).action(async function (mid: string) {
         const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runCreator(ctx, { ...this.opts<Omit<CreatorOptions, 'mid'>>(), mid }));
       });

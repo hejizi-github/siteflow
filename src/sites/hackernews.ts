@@ -140,11 +140,18 @@ async function collectUser(ctx: SiteCommandContext, id: string): Promise<{ url: 
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
     const profile = {};
-    for (const row of Array.from(document.querySelectorAll('table.profile tr'))) {
+    const rows = Array.from(document.querySelectorAll('tr'));
+    for (const row of rows) {
       const cells = Array.from(row.querySelectorAll('td'));
-      if (cells.length >= 2) profile[clean(cells[0].textContent).replace(/:$/, '')] = clean(cells[1].innerText || cells[1].textContent);
+      if (cells.length < 2) continue;
+      const key = clean(cells[0].textContent).replace(/:$/, '');
+      const value = clean(cells[1].innerText || cells[1].textContent);
+      if (!key || !value) continue;
+      if (/^(user|created|karma|about)$/i.test(key)) profile[key] = value;
     }
-    const links = Array.from(document.querySelectorAll('table.profile a[href]')).map(a => ({ text: clean(a.textContent), url: abs(a.getAttribute('href') || '') }));
+    const links = Array.from(document.querySelectorAll('a[href]'))
+      .map(a => ({ text: clean(a.textContent), url: abs(a.getAttribute('href') || '') }))
+      .filter(link => link.text && !['login', 'Hacker News', 'new', 'past', 'comments', 'ask', 'show', 'jobs', 'submit'].includes(link.text));
     return { url: location.href, title: document.title, profile, links };
   })()`);
   return result.value as { url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> };

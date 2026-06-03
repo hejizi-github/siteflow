@@ -1,8 +1,7 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression } from './capabilities.js';
-import { sleep } from './capabilities.js';
+import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { addPageIdOption, clampInt, fetchJson, openOrNavigate, siteReceipt } from './http-utils.js';
+import { clampInt, fetchJson, siteReceipt } from './http-utils.js';
 
 const SITE = 'github';
 const API = 'https://api.github.com';
@@ -32,7 +31,7 @@ async function runTrending(ctx: SiteCommandContext, options: TrendingOptions): P
   if (options.since) params.set('since', options.since);
   const lang = options.language ? `/${encodeURIComponent(options.language)}` : '';
   const url = `https://github.com/trending${lang}${params.toString() ? `?${params}` : ''}`;
-  const page = await openOrNavigate(ctx, url, options.pageId);
+  const page = await openOrNavigateSitePage(ctx.profile, url, options.pageId);
   await sleep(1200);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
@@ -133,7 +132,7 @@ export const githubAdapter: SiteAdapter = {
   description: 'Read-only GitHub Trending, repository, releases, issues, and repository search.',
   commands: [
     { name: 'trending', description: 'Collect GitHub Trending repositories', configure(command: Command): void {
-      addPageIdOption(command.option('--language <lang>', 'trending language path').option('--since <daily|weekly|monthly>', 'time range', 'daily').option('--limit <n>', 'number of repos', '25')).action(async function () {
+      addSitePageIdOption(command.option('--language <lang>', 'trending language path').option('--since <daily|weekly|monthly>', 'time range', 'daily').option('--limit <n>', 'number of repos', '25')).action(async function () {
         const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runTrending(ctx, this.opts<TrendingOptions>()));
       });

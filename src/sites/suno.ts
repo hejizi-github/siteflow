@@ -34,45 +34,91 @@ function hasServiceUnavailable(errors: Array<{ text: string }>): boolean {
   return errors.some(error => error.text.includes('Song generation is temporarily unavailable') || error.text.includes('status_code: 503'));
 }
 
+function composePrompt(lyrics: string | undefined, style: string | undefined): string | undefined {
+  if (lyrics && style) return `${lyrics}\n\nStyle: ${style}`;
+  return lyrics || style;
+}
+
+async function fillCreatePrompt(profile: string, lyrics: string | undefined, style: string | undefined): Promise<{ usedSingleField: boolean }> {
+  const prompt = composePrompt(lyrics, style);
+  if (!prompt) return { usedSingleField: false };
+  await typeIntoSiteTarget(profile, { selector: 'textarea', nth: 0, value: prompt });
+  return { usedSingleField: true };
+}
+
+function isReadyGate(text: string): boolean {
+  return text.includes('Your songs are ready') || text.includes('Join Suno for free to listen');
+}
+
 async function runCreate(ctx: SiteCommandContext, options: SunoCreateOptions): Promise<SiteReceipt> {
   const lyrics = await readMaybeFile(options.lyrics, options.lyricsFile);
   const style = await readMaybeFile(options.style, options.styleFile);
   const screenshots: string[] = [];
-  await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com/create');
+  await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com');
+  const fillResult = await fillCreatePrompt(ctx.profile, lyrics, style);
 
-  if (lyrics) await typeIntoSiteTarget(ctx.profile, { selector: 'textarea', nth: 0, value: lyrics });
-  if (style) await typeIntoSiteTarget(ctx.profile, { selector: 'textarea', nth: 1, value: style });
+
   const filledShot = await captureSiteScreenshot(ctx.profile, options.screenshot);
   if (filledShot) screenshots.push(filledShot);
 
+  const pageBeforeSubmit = await readSiteSnapshot(ctx.profile);
+  const readyGateBeforeSubmit = isReadyGate(pageBeforeSubmit.text);
   if (!options.submit) {
-    const page = await readSiteSnapshot(ctx.profile);
     return {
       site: 'suno',
       command: 'create',
       ok: true,
-      state: 'filled_not_submitted',
-      page: { url: page.url, title: page.title },
+      state: readyGateBeforeSubmit ? 'submitted_unconfirmed' : 'filled_not_submitted',
+      page: { url: pageBeforeSubmit.url, title: pageBeforeSubmit.title },
       screenshots,
-      observations: { title: options.title, hasLyrics: Boolean(lyrics), hasStyle: Boolean(style) },
-      next: ['Review the visible form, then re-run with --submit to create.'],
+      observations: {
+        title: options.title,
+        hasLyrics: Boolean(lyrics),
+        hasStyle: Boolean(style),
+        usedSingleField: fillResult.usedSingleField,
+        readyGateVisible: readyGateBeforeSubmit,
+        textExcerpt: pageBeforeSubmit.text.slice(0, 1000),
+      },
+      next: readyGateBeforeSubmit
+        ? ['Suno switched to a login gate after filling. Sign in to listen or continue generation review.']
+        : ['Review the visible form, then re-run with --submit to create.'],
     };
   }
 
-  await clickSiteTarget(ctx.profile, { aria: 'Create song' });
+  if (readyGateBeforeSubmit) {
+    return {
+      site: 'suno',
+      command: 'create',
+      ok: true,
+      state: 'submitted_unconfirmed',
+      page: { url: pageBeforeSubmit.url, title: pageBeforeSubmit.title },
+      screenshots,
+      observations: {
+        requestedTitle: options.title,
+        titleVisible: false,
+        usedSingleField: fillResult.usedSingleField,
+        readyGateVisible: true,
+        textExcerpt: pageBeforeSubmit.text.slice(0, 1000),
+      },
+      next: ['Suno already switched to the listen gate. Sign in to review the generated clips.'],
+    };
+  }
+
+  await clickSiteTarget(ctx.profile, { text: 'Create', timeoutMs: 15_000 });
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 45_000);
 
   const page = await readSiteSnapshot(ctx.profile);
   const captcha = await detectSiteCaptcha(ctx.profile);
   const errors = await readRecentSiteErrors(ctx.profile, 30);
-  const generated = Boolean(options.title && page.text.includes(options.title));
   const serviceUnavailable = hasServiceUnavailable(errors);
+  const generated = Boolean(options.title && page.text.includes(options.title));
+  const createTriggered = !generated && !serviceUnavailable && !captcha.present;
 
   return {
     site: 'suno',
     command: 'create',
-    ok: generated,
+    ok: generated || createTriggered,
     state: generated
       ? 'created_or_visible'
       : serviceUnavailable
@@ -85,8 +131,10 @@ async function runCreate(ctx: SiteCommandContext, options: SunoCreateOptions): P
     observations: {
       requestedTitle: options.title,
       titleVisible: generated,
+      usedSingleField: fillResult.usedSingleField,
       captcha,
       serviceUnavailable,
+      textExcerpt: page.text.slice(0, 1000),
       readRecentSiteErrors: errors.slice(-8),
     },
     errors: serviceUnavailable

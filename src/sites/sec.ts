@@ -113,11 +113,24 @@ async function runDownload(_ctx: SiteCommandContext, options: DownloadOptions): 
   if (!options.cik) throw new Error('sec download requires --cik <cik> for the filing accession');
   const cik = cikPad(options.cik);
   const compact = accessionCompact(options.accession);
-  const index = await fetchJson<{ directory?: { item?: Array<{ name: string; type?: string; size?: string }> } }>(`${ARCHIVES}/${Number(cik)}/${compact}/index.json`, headers());
+  const archiveUrl = `${ARCHIVES}/${Number(cik)}/${compact}/`;
+  const index = await fetchJson<{ directory?: { item?: Array<{ name: string; type?: string; size?: string }> } }>(`${archiveUrl}index.json`, headers());
   const items = index.data.directory?.item || [];
+  if (index.status >= 400 || items.length === 0) {
+    return siteReceipt(SITE, 'download', {
+      accession: options.accession,
+      cik,
+      archiveUrl,
+      indexStatus: index.status,
+      selectedFile: undefined,
+      sideEffects: [],
+    }, false, [{
+      code: 'SEC_ARCHIVE_NOT_FOUND',
+      message: `No downloadable SEC archive index was found for accession ${options.accession}. Verify the accession/CIK pair with \`siteflow sec filings <ticker> --forms <form>\` first.`,
+    }]);
+  }
   const primary = items.find(item => /\.(htm|html|xml|txt)$/i.test(item.name)) || items[0];
-  if (!primary) throw new Error(`No downloadable files found for ${options.accession}`);
-  const url = `${ARCHIVES}/${Number(cik)}/${compact}/${primary.name}`;
+  const url = `${archiveUrl}${primary.name}`;
   const downloaded = await downloadFile(url, options.out || 'downloads/sec', `${options.accession}-${primary.name}`, {
     maxBytes: 100 * 1024 * 1024,
     headers: headers(),
@@ -125,7 +138,7 @@ async function runDownload(_ctx: SiteCommandContext, options: DownloadOptions): 
   return siteReceipt(SITE, 'download', {
     accession: options.accession,
     cik,
-    archiveUrl: `${ARCHIVES}/${Number(cik)}/${compact}/`,
+    archiveUrl,
     selectedFile: primary,
     sourceUrl: url,
     ...downloaded,

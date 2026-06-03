@@ -1,8 +1,6 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { navigateSitePage, openSitePage } from './capabilities.js';
-import type { SiteCommandContext } from './types.js';
 
 export function clampInt(value: string | undefined, fallback: number, min: number, max: number): number {
   const parsed = Number(value || fallback);
@@ -22,23 +20,6 @@ export function cleanText(value: unknown): string {
     .replace(/&quot;/g, '"')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-export function parsePageId(value: string | undefined): number | undefined {
-  if (value === undefined || value === '') return undefined;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return parsed;
-}
-
-export async function openOrNavigate(ctx: SiteCommandContext, url: string, pageIdValue?: string): Promise<{ url: string; title: string; pageId?: number }> {
-  const pageId = parsePageId(pageIdValue);
-  const page = pageId ? await navigateSitePage(ctx.profile, url, pageId) : await openSitePage(ctx.profile, url);
-  return { url: page.url, title: page.title, pageId: page.id };
-}
-
-export function addPageIdOption(command: import('commander').Command): import('commander').Command {
-  return command.option('--page-id <id>', 'existing browser tab id from `siteflow browser pages`; keeps automation bound to that tab');
 }
 
 export async function fetchJson<T>(url: string, headers: Record<string, string> = {}): Promise<{ url: string; status: number; data: T; contentType: string }> {

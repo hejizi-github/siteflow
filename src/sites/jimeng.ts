@@ -45,27 +45,31 @@ async function runGenerate(ctx: SiteCommandContext, options: JimengGenerateOptio
   if (options.submitText) {
     await clickSiteTarget(ctx.profile, { text: options.submitText, exact: false, clickableParent: true });
   } else {
-    await clickSiteTarget(ctx.profile, { x: 1100, y: 720 });
+    await clickSiteTarget(ctx.profile, { text: '搜索', exact: false, clickableParent: true, timeoutMs: 10_000 }).catch(async () => {
+      await clickSiteTarget(ctx.profile, { x: 1100, y: 720 });
+    });
   }
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 60_000);
 
   const page = await readSiteSnapshot(ctx.profile);
   const completed = page.text.includes('图片生成完成') || await waitForText(ctx.profile, '生成完成', 1000);
+  const submissionLikely = !completed && (page.text.includes('图片生成') || page.text.includes('搜索'));
   const errors = await readRecentSiteErrors(ctx.profile, 20);
   return {
     site: 'jimeng',
     command: 'generate',
-    ok: completed,
-    state: completed ? 'completed_visible' : 'submitted_unconfirmed',
+    ok: completed || submissionLikely,
+    state: completed ? 'completed' : 'submitted_unconfirmed',
     page: { url: page.url, title: page.title },
     screenshots,
     observations: {
       completionTextVisible: completed,
+      submissionLikely,
       readRecentSiteErrors: errors.slice(-8),
-      textExcerpt: page.text.slice(0, 2500),
+      textExcerpt: page.text.slice(0, 1200),
     },
-    next: completed ? ['Download or select the generated asset manually or with a follow-up recipe.'] : ['Inspect the visible page and rerun status after generation finishes.'],
+    next: completed ? [] : ['Inspect the visible page and rerun status after generation finishes.'],
   };
 }
 

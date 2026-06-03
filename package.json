@@ -23,7 +23,8 @@
     "test:unit": "npm run build && node --test test/unit/**/*.test.mjs",
     "prepack": "npm run build",
     "pack:local": "npm pack",
-    "start": "node dist/cli/main.js"
+    "start": "node dist/cli/main.js",
+    "smoke:fixture": "npm run build && node test/smoke/fixture-smoke.mjs"
   },
   "keywords": [
     "browser",

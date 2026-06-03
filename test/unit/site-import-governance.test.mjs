@@ -45,6 +45,14 @@ test('site adapters use the capabilities facade instead of helper internals', ()
   assert.deepEqual(found, [...allowedHelperImports].sort());
 });
 
+
+test('site http utilities stay browser-kernel neutral', () => {
+  const source = fs.readFileSync(path.join(sitesDir, 'http-utils.ts'), 'utf8');
+  assert.equal(source.includes("from './capabilities.js'"), false);
+  assert.equal(source.includes("from '../daemon/client.js'"), false);
+  assert.equal(source.includes('addPageIdOption'), false);
+});
+
 test('capabilities facade does not expose legacy daemon-shaped adapter names', () => {
   const source = fs.readFileSync(path.join(sitesDir, 'capabilities.ts'), 'utf8');
   const legacyExports = [

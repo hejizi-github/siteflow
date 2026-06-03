@@ -551,6 +551,12 @@ async function collectComic(ctx: SiteCommandContext, target: string): Promise<Co
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
     const text = document.body.innerText || '';
     const lines = text.split('\\n').map(clean).filter(Boolean);
+    const titleName = (() => {
+      const title = clean(document.title);
+      const match = title.match(/《([^》]+)》/);
+      if (match) return clean(match[1]);
+      return clean(title.split('|')[0]?.split('-')[0]);
+    })();
     const getAfter = label => {
       const line = lines.find(item => item.startsWith(label));
       return line ? clean(line.slice(label.length)) : undefined;
@@ -577,7 +583,7 @@ async function collectComic(ctx: SiteCommandContext, target: string): Promise<Co
     return {
       url: location.href,
       title: document.title,
-      name: clean(document.querySelector('h1')?.innerText) || lines.find(line => !['肉漫屋', '首頁'].includes(line)),
+      name: clean(document.querySelector('h1')?.innerText) || titleName || getAfter('別名:') || lines.find(line => !['肉漫屋', '首頁', '全部漫畫'].includes(line)),
       aliases: getAfter('別名:'),
       author: getAfter('作者:'),
       status: getAfter('狀態:'),
@@ -620,6 +626,12 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
     const normalizeUrl = value => String(value || '').replace(/\\\\u0026/g, '&').replace(/\\\\+$/, '');
+    const titleName = (() => {
+      const title = clean(document.title);
+      const match = title.match(/《([^》]+)》/);
+      if (match) return clean(match[1]);
+      return clean(title.split('|')[0]?.split('-')[0]);
+    })();
     const validRoumanUrl = value => /^https:\\/\\/r5\\.rmcdn\\d+\\.xyz\\/m\\/[A-Za-z0-9_-]+\\/wm:\\d+\\/sr:\\d+\\/[A-Za-z0-9_-]+\\.(?:webp|jpe?g|png|gif|avif)$/i.test(value);
     const hostOf = href => { try { return new URL(href).host } catch { return '' } };
     const pathShapeOf = href => {
@@ -721,8 +733,8 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
     return {
       url: location.href,
       title: document.title,
-      comicName: lines.find(line => line && !['肉漫屋', '首頁'].includes(line)),
-      chapterTitle: lines.find(line => /^第\\d+話|^最終話|^後記/.test(line)),
+      comicName: titleName || lines.find(line => line && !['肉漫屋', '首頁', '全部漫畫'].includes(line)),
+      chapterTitle: lines.find(line => /^第\d+話|^第\d+话|^最終話|^后记|^後記/.test(line)),
       pageIndicator: lines.find(line => /^\\d+\\/\\d+頁$/.test(line)),
       catalogUrl: links.find(link => link.text === '目錄')?.href,
       previousUrl: links.find(link => link.text === '上一頁')?.href,
@@ -733,7 +745,8 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
   const raw = result.value as Omit<ChapterData, 'imageCount' | 'bodyCandidateCount' | 'filteredImageCount' | 'unknownImageCount' | 'mediaHosts' | 'filteredHosts' | 'unknownHosts'> & { images: Array<Omit<ChapterImageSummary, 'kind'>> };
   const images = raw.images
     .map(image => ({ ...image, pageNumber: image.pageNumber ?? pageNumberFromRoumanUrl(image.url), kind: classifyImageHost(image.host) }))
-    .sort((a, b) => (a.pageNumber ?? a.index) - (b.pageNumber ?? b.index));
+    .sort((a, b) => (a.pageNumber ?? a.index) - (b.pageNumber ?? b.index))
+    .map((image, index) => ({ ...image, index }));
   const bodyHosts = domains(images.filter(image => image.kind === 'body_candidate').map(image => image.host));
   const filteredHosts = domains(images.filter(image => image.kind === 'ad_or_tracking').map(image => image.host));
   const unknownHosts = domains(images.filter(image => image.kind === 'unknown').map(image => image.host));

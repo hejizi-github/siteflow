@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { douyinTesting } from '../../dist/sites/douyin.js';
 import { twitterTesting } from '../../dist/sites/twitter.js';
 import { xhsTesting } from '../../dist/sites/xhs.js';
 import { createPageObservation } from '../../dist/runtime/page-observation.js';
@@ -90,4 +91,19 @@ test('xhs proof exercises migrated draft flow and stops before publish', async (
   assert.equal(receipt.ok, true);
   assert.equal(receipt.state, 'draft_filled_publish_not_clicked');
   assert.deepEqual(receipt.next, ['Review layout, topics, AI content declaration, and visibility before publishing manually.']);
+});
+
+test('douyin auth detection treats creator login page as auth required', () => {
+  const text = [
+    '抖音创作者中心',
+    '解锁创作者专属功能',
+    '短信登录',
+    '发送验证码',
+    '登 录',
+  ].join('\n');
+
+  assert.equal(
+    douyinTesting.isAuthRequired(text, 'https://creator.douyin.com/creator-micro/content/upload'),
+    true,
+  );
 });

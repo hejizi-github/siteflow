@@ -1,3 +1,4 @@
+import type { Command } from 'commander';
 import {
   browserUpload as daemonBrowserUpload,
   evaluate as daemonEvaluate,
@@ -38,8 +39,26 @@ export async function openSitePage(profile: string, url: string): Promise<PageIn
   return daemonOpenPage(profile, url);
 }
 
+
+export function addSitePageIdOption(command: Command): Command {
+  return command.option('--page-id <id>', 'existing browser tab id from `siteflow browser pages`; keeps automation bound to that tab');
+}
+
 export async function navigateSitePage(profile: string, url: string, pageId?: number): Promise<PageInfo> {
   return daemonNavigatePage(profile, url, pageId);
+}
+
+function parseSitePageId(value: string | undefined): number | undefined {
+  if (value === undefined || value === '') return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+export async function openOrNavigateSitePage(profile: string, url: string, pageIdValue?: string): Promise<{ url: string; title: string; pageId?: number }> {
+  const pageId = parseSitePageId(pageIdValue);
+  const page = pageId ? await navigateSitePage(profile, url, pageId) : await openSitePage(profile, url);
+  return { url: page.url, title: page.title, pageId: page.id };
 }
 
 export async function listSitePages(profile: string): Promise<PageInfo[]> {

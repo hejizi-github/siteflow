@@ -1,6 +1,5 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression, navigateSitePage, openSitePage } from './capabilities.js';
-import { sleep } from './capabilities.js';
+import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
 
 const SITE = 'xueqiu';
@@ -56,13 +55,6 @@ function clampInt(value: string | undefined, fallback: number, min: number, max:
   return Math.max(min, Math.min(Math.floor(parsed), max));
 }
 
-function parsePageId(value: string | undefined): number | undefined {
-  if (value === undefined || value === '') return undefined;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  return parsed;
-}
-
 function normalizeSymbol(value: string): string {
   return value.trim().toUpperCase();
 }
@@ -101,15 +93,10 @@ function parseStatusTarget(target: string): { userId?: string; statusId: string;
   throw new Error('status target must be a status id, <userId>/<statusId>, or xueqiu status URL');
 }
 
-async function ensureXueqiuPage(ctx: SiteCommandContext, url = ORIGIN, pageId?: number): Promise<{ url: string; title: string; pageId?: number }> {
-  if (pageId) {
-    const page = await navigateSitePage(ctx.profile, url, pageId);
-    await sleep(900);
-    return { url: page.url, title: page.title, pageId: page.id };
-  }
-  const page = await openSitePage(ctx.profile, url);
+async function ensureXueqiuPage(ctx: SiteCommandContext, url = ORIGIN, pageIdValue?: string): Promise<{ url: string; title: string; pageId?: number }> {
+  const page = await openOrNavigateSitePage(ctx.profile, url, pageIdValue);
   await sleep(900);
-  return { url: page.url, title: page.title, pageId: page.id };
+  return page;
 }
 
 function challengeError(page: { url: string; title: string }): Array<{ code: string; message: string }> {
@@ -174,23 +161,21 @@ function receipt(command: string, page: { url: string; title: string }, observat
   };
 }
 
-function addPageIdOption(command: Command): Command {
-  return command.option('--page-id <id>', 'existing browser tab id from `siteflow browser pages`; keeps Xueqiu automation bound to that tab');
-}
-
-function httpErrors(statuses: Array<{ endpoint: string; status: number }>): Array<{ code: string; message: string }> {
+function httpErrors(statuses: Array<{ endpoint: string; status: number; detail?: string }>): Array<{ code: string; message: string }> {
   return statuses
     .filter(item => !okStatus(item.status))
     .map(item => ({
-      code: 'HTTP_STATUS',
-      message: `${item.endpoint} returned HTTP ${item.status}`,
+      code: item.status === 0 ? 'PAGE_CONTEXT_FETCH_FAILED' : 'HTTP_STATUS',
+      message: item.status === 0
+        ? `${item.endpoint} did not return a structured page-context response${item.detail ? `: ${item.detail}` : ''}`
+        : `${item.endpoint} returned HTTP ${item.status}`,
     }));
 }
 
 async function runHome(ctx: SiteCommandContext, options: LimitOptions): Promise<SiteReceipt> {
   const limit = clampInt(options.limit, 10, 1, 50);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, ORIGIN, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const [quotes, events, hotStocks] = await Promise.all([
     xueqiuGet<{ data?: { items?: unknown[] } }>(ctx, 'https://stock.xueqiu.com/v5/stock/batch/quote.json?symbol=SH000001,SZ399001,SZ399006,SH000688,SH000016,SH000300,BJ899050,HKHSI,HKHSCEI,HKHSTECH,.DJI,.IXIC,.INX', pageId),
     xueqiuGet<{ list?: unknown[] }>(ctx, `/hot_event/list.json?count=${limit}`, pageId),
@@ -220,9 +205,9 @@ async function runHome(ctx: SiteCommandContext, options: LimitOptions): Promise<
 
 async function runHot(ctx: SiteCommandContext, options: HotOptions): Promise<SiteReceipt> {
   const limit = clampInt(options.limit, 10, 1, 50);
-  const pageId = parsePageId(options.pageId);
   const kind = options.kind === 'stock' ? 'stock' : 'event';
-  const page = await ensureXueqiuPage(ctx, ORIGIN, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   if (kind === 'stock') {
     const data = await xueqiuGet<{ data?: { items?: unknown[] } }>(ctx, `https://stock.xueqiu.com/v5/stock/hot_stock/list.json?size=${Math.min(limit, 50)}&_type=10&type=10&include=1`, pageId);
     const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
@@ -237,9 +222,9 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
   const keyword = options.keyword.trim();
   const limit = clampInt(options.limit, 10, 1, 50);
   const pageNum = clampInt(options.page, 1, 1, 100);
-  const pageId = parsePageId(options.pageId);
   const type = options.type || 'all';
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/k?q=${encodeURIComponent(keyword)}`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const tasks: Array<Promise<unknown>> = [];
   const observations: Record<string, unknown> = { keyword, type, page: pageNum, limit, pageId };
   if (type === 'stock' || type === 'all') {
@@ -294,8 +279,8 @@ function normalizeStatuses(items: unknown[]): Array<Record<string, unknown>> {
 
 async function runQuote(ctx: SiteCommandContext, options: SymbolOptions): Promise<SiteReceipt> {
   const symbol = normalizeSymbol(options.symbol);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/S/${encodeURIComponent(symbol)}`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const data = await xueqiuGet<{ data?: unknown }>(ctx, `https://stock.xueqiu.com/v5/stock/quote.json?symbol=${encodeURIComponent(symbol)}&extend=detail`, pageId);
   const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
   return receipt('quote', page, { symbol, pageId, endpoint: data.url, httpStatus: data.status, quote: data.data?.data }, errors.length === 0, errors);
@@ -304,8 +289,8 @@ async function runQuote(ctx: SiteCommandContext, options: SymbolOptions): Promis
 async function runMinute(ctx: SiteCommandContext, options: SymbolOptions & { period?: string }): Promise<SiteReceipt> {
   const symbol = normalizeSymbol(options.symbol);
   const period = options.period || '1d';
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/S/${encodeURIComponent(symbol)}`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const data = await xueqiuGet<{ data?: { items?: unknown[]; last_close?: number } }>(ctx, `https://stock.xueqiu.com/v5/stock/chart/minute.json?symbol=${encodeURIComponent(symbol)}&period=${encodeURIComponent(period)}`, pageId);
   const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
   return receipt('minute', page, {
@@ -323,8 +308,8 @@ async function runMinute(ctx: SiteCommandContext, options: SymbolOptions & { per
 async function runTrades(ctx: SiteCommandContext, options: TradesOptions): Promise<SiteReceipt> {
   const symbol = normalizeSymbol(options.symbol);
   const count = clampInt(options.count, 10, 1, 100);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/S/${encodeURIComponent(symbol)}`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const data = await xueqiuGet<{ data?: { items?: unknown[] } }>(ctx, `https://stock.xueqiu.com/v5/stock/history/trade.json?symbol=${encodeURIComponent(symbol)}&count=${count}`, pageId);
   const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
   return receipt('trades', page, { symbol, count, pageId, endpoint: data.url, httpStatus: data.status, items: data.data?.data?.items || [] }, errors.length === 0, errors);
@@ -332,8 +317,8 @@ async function runTrades(ctx: SiteCommandContext, options: TradesOptions): Promi
 
 async function runOrderbook(ctx: SiteCommandContext, options: SymbolOptions): Promise<SiteReceipt> {
   const symbol = normalizeSymbol(options.symbol);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/S/${encodeURIComponent(symbol)}`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const data = await xueqiuGet<{ data?: unknown }>(ctx, `https://stock.xueqiu.com/v5/stock/realtime/pankou.json?symbol=${encodeURIComponent(symbol)}`, pageId);
   const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
   return receipt('orderbook', page, { symbol, pageId, endpoint: data.url, httpStatus: data.status, orderbook: data.data?.data }, errors.length === 0, errors);
@@ -343,11 +328,11 @@ async function runDiscussions(ctx: SiteCommandContext, options: DiscussionsOptio
   const symbol = normalizeSymbol(options.symbol);
   const pageNum = clampInt(options.page, 1, 1, 100);
   const limit = clampInt(options.limit, 10, 1, 50);
-  const pageId = parsePageId(options.pageId);
   const sort = options.sort === 'hot' ? 'alpha' : 'time';
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/S/${encodeURIComponent(symbol)}`, pageId);
-  const data = await xueqiuGet<{ list?: unknown[]; count?: number; about?: string }>(ctx, `/query/v1/symbol/search/status.json?count=${limit}&comment=0&symbol=${encodeURIComponent(symbol)}&hl=0&source=all&sort=${encodeURIComponent(sort)}&page=${pageNum}&q=&type=11`, pageId);
-  const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
+  const data = await xueqiuGet<{ list?: unknown[]; count?: number; about?: string; error_description?: string }>(ctx, `/query/v1/symbol/search/status.json?count=${limit}&comment=0&symbol=${encodeURIComponent(symbol)}&hl=0&source=all&sort=${encodeURIComponent(sort)}&page=${pageNum}&q=&type=11`, pageId);
+  const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status, detail: data.data?.error_description }])];
   return receipt('discussions', page, {
     symbol,
     page: pageNum,
@@ -363,8 +348,9 @@ async function runDiscussions(ctx: SiteCommandContext, options: DiscussionsOptio
 
 async function runStatus(ctx: SiteCommandContext, options: StatusOptions): Promise<SiteReceipt> {
   const target = parseStatusTarget(options.target);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, target.url || ORIGIN, pageId);
+  if (!target.url) throw new Error('xueqiu status requires a full status URL or <userId>/<statusId> target');
+  const page = await ensureXueqiuPage(ctx, target.url, options.pageId);
+  const pageId = page.pageId;
   const snapshot = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
     const text = document.body.innerText || '';
@@ -377,7 +363,8 @@ async function runStatus(ctx: SiteCommandContext, options: StatusOptions): Promi
       links: Array.from(document.querySelectorAll('a[href]')).slice(0, 80).map(a => ({ text: clean(a.textContent), url: a.href }))
     };
   })()`, pageId);
-  const errors = challengeError(page);
+  const snap = snapshot.value as { url?: string; title?: string } | undefined;
+  const errors = challengeError({ url: String(snap?.url || page.url), title: String(snap?.title || page.title) });
   return receipt('status', { url: page.url, title: page.title }, {
     target,
     pageId,
@@ -389,10 +376,10 @@ async function runComments(ctx: SiteCommandContext, options: CommentsOptions): P
   const target = parseStatusTarget(options.target);
   const limit = clampInt(options.limit, 20, 1, 100);
   const maxId = options.maxId || '-1';
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, target.url || ORIGIN, pageId);
-  const data = await xueqiuGet<{ comments?: unknown[]; comment_tl_count?: number; next_max_id?: number }>(ctx, `/statuses/v3/comments.json?id=${encodeURIComponent(target.statusId)}&type=4&size=${limit}&max_id=${encodeURIComponent(maxId)}`, pageId);
-  const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
+  const page = await ensureXueqiuPage(ctx, target.url || ORIGIN, options.pageId);
+  const pageId = page.pageId;
+  const data = await xueqiuGet<{ comments?: unknown[]; comment_tl_count?: number; next_max_id?: number; error_description?: string }>(ctx, `/statuses/v3/comments.json?id=${encodeURIComponent(target.statusId)}&type=4&size=${limit}&max_id=${encodeURIComponent(maxId)}`, pageId);
+  const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status, detail: data.data?.error_description }])];
   return receipt('comments', page, {
     target,
     limit,
@@ -430,8 +417,8 @@ function normalizeComments(items: unknown[]): Array<Record<string, unknown>> {
 async function runFinance(ctx: SiteCommandContext, options: FinanceOptions): Promise<SiteReceipt> {
   const symbol = normalizeSymbol(options.symbol);
   const count = clampInt(options.count, 5, 1, 20);
-  const pageId = parsePageId(options.pageId);
-  const page = await ensureXueqiuPage(ctx, `${ORIGIN}/snowman/S/${encodeURIComponent(symbol)}/detail#/ZYCWZB`, pageId);
+  const page = await ensureXueqiuPage(ctx, ORIGIN, options.pageId);
+  const pageId = page.pageId;
   const data = await xueqiuGet<{ data?: unknown }>(ctx, `https://stock.xueqiu.com/v5/stock/finance/cn/indicator.json?symbol=${encodeURIComponent(symbol)}&type=all&is_detail=true&count=${count}&timestamp=${Date.now()}`, pageId);
   const errors = [...challengeError(page), ...httpErrors([{ endpoint: data.url, status: data.status }])];
   return receipt('finance', page, { symbol, count, pageId, endpoint: data.url, httpStatus: data.status, finance: data.data?.data }, errors.length === 0, errors);
@@ -446,7 +433,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'home',
       description: 'Collect Xueqiu homepage index quotes, hot events, and hot stocks',
       configure(command: Command): void {
-        addPageIdOption(command.option('--limit <n>', 'number of hot records to return', '10')).action(async function () {
+        addSitePageIdOption(command.option('--limit <n>', 'number of hot records to return', '10')).action(async function () {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runHome(ctx, this.opts<LimitOptions>()));
         });
@@ -459,7 +446,7 @@ export const xueqiuAdapter: SiteAdapter = {
         command
           .option('--kind <event|stock>', 'hot list kind', 'event')
           .option('--limit <n>', 'number of records to return', '10');
-        addPageIdOption(command)
+        addSitePageIdOption(command)
           .action(async function () {
             const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHot(ctx, this.opts<HotOptions>()));
@@ -475,7 +462,7 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--type <stock|status|all>', 'search result type', 'all')
           .option('--page <n>', 'result page', '1')
           .option('--limit <n>', 'number of records to return', '10');
-        addPageIdOption(command)
+        addSitePageIdOption(command)
           .action(async function (keyword: string) {
             const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
@@ -486,7 +473,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'quote',
       description: 'Collect one Xueqiu stock quote detail',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<symbol>', 'Xueqiu symbol, e.g. SH600519')).action(async function (symbol: string) {
+        addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol, e.g. SH600519')).action(async function (symbol: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runQuote(ctx, { ...this.opts<Omit<SymbolOptions, 'symbol'>>(), symbol }));
         });
@@ -496,7 +483,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'minute',
       description: 'Collect one stock minute chart',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--period <period>', 'minute chart period', '1d')).action(async function (symbol: string) {
+        addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--period <period>', 'minute chart period', '1d')).action(async function (symbol: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runMinute(ctx, { ...this.opts<{ period?: string }>(), symbol }));
         });
@@ -506,7 +493,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'trades',
       description: 'Collect recent stock trade ticks',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of trades', '10')).action(async function (symbol: string) {
+        addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of trades', '10')).action(async function (symbol: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runTrades(ctx, { ...this.opts<Omit<TradesOptions, 'symbol'>>(), symbol }));
         });
@@ -516,7 +503,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'orderbook',
       description: 'Collect realtime order book / pankou for one stock',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<symbol>', 'Xueqiu symbol')).action(async function (symbol: string) {
+        addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol')).action(async function (symbol: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runOrderbook(ctx, { ...this.opts<Omit<SymbolOptions, 'symbol'>>(), symbol }));
         });
@@ -531,7 +518,7 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--page <n>', 'discussion page', '1')
           .option('--limit <n>', 'number of statuses', '10')
           .option('--sort <time|hot>', 'discussion sort', 'time');
-        addPageIdOption(command)
+        addSitePageIdOption(command)
           .action(async function (symbol: string) {
             const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDiscussions(ctx, { ...this.opts<Omit<DiscussionsOptions, 'symbol'>>(), symbol }));
@@ -542,7 +529,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'status',
       description: 'Collect one Xueqiu status page snapshot',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<status-url-or-id>', 'status id, userId/statusId, or status URL')).action(async function (target: string) {
+        addSitePageIdOption(command.argument('<status-url-or-id>', 'status URL or <userId>/<statusId> target')).action(async function (target: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runStatus(ctx, { ...this.opts<Omit<StatusOptions, 'target'>>(), target }));
         });
@@ -553,10 +540,10 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect comments for one Xueqiu status',
       configure(command: Command): void {
         command
-          .argument('<status-url-or-id>', 'status id, userId/statusId, or status URL')
+          .argument('<status-url-or-id>', 'status URL, <userId>/<statusId>, or status id')
           .option('--limit <n>', 'number of comments', '20')
           .option('--max-id <id>', 'comment cursor max_id', '-1');
-        addPageIdOption(command)
+        addSitePageIdOption(command)
           .action(async function (target: string) {
             const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runComments(ctx, { ...this.opts<Omit<CommentsOptions, 'target'>>(), target }));
@@ -567,7 +554,7 @@ export const xueqiuAdapter: SiteAdapter = {
       name: 'finance',
       description: 'Collect Xueqiu financial indicators for one stock',
       configure(command: Command): void {
-        addPageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of reports', '5')).action(async function (symbol: string) {
+        addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of reports', '5')).action(async function (symbol: string) {
           const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runFinance(ctx, { ...this.opts<Omit<FinanceOptions, 'symbol'>>(), symbol }));
         });
