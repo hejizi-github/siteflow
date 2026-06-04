@@ -25,9 +25,12 @@ src/sites/capabilities.ts  adapter 使用 browser/daemon 能力的唯一门面
 
 ```ts
 import type { Command } from 'commander';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { runSiteCommand } from './runner.js';
-import { ensureSitePage, readSiteSnapshot } from './capabilities.js';
+import {
+  ensureSitePage,
+  readSiteSnapshot,
+  runSiteCommand,
+} from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
   const page = await ensureSitePage(ctx.profile, 'https://example.com', 'example.com');
@@ -93,12 +96,16 @@ export const exampleAdapter: SiteAdapter = {
 - `readRecentSiteErrors`
 - `detectSiteCaptcha`
 - `evaluateInSitePage`
+- `evaluateSiteExpression`
+- `listSitePages`
 - `listSiteNetwork`
 - `readSiteNetworkBody`
+- `readSiteNetworkPart`
 - `replaySiteRequestWithBody`
 - `replaySiteRequestWithUrl`
+- `reloadSitePage`
 
-不要从 adapter 直接 import daemon client 或 helpers。
+不要从 adapter 直接 import daemon client、runner、types、http-utils 或 helpers；这些边界统一由 capabilities facade 承担。
 
 ## 登录和挑战页
 

@@ -8,7 +8,8 @@
 - CLI 命令：`siteflow`
 - README 安装方式：`npm install -g siteflow-cli`
 - GitHub CI：`build + test:unit + pack --dry-run`
-- Release Check：tag push 时再次校验包边界
+- Release Check：`v*` tag push 时再次校验包边界
+- Publish Workflow：`v*` tag push 时自动校验、自动 npm 发布、自动创建 GitHub Release
 - 发布文件：`dist`、README、LICENSE、SECURITY、CONTRIBUTING、docs、examples/receipts、assets/readme
 - 安全边界：禁止把 cookie、trace、receipt、profile、campaign、HAR 放进发布包或仓库
 
@@ -28,3 +29,5 @@
 4. 检查 `README.md` 中的命令示例是否仍存在于 CLI
 5. 检查 `.github/workflows/*.yml` 与 `package.json` scripts 是否一致
 6. 检查 `SECURITY.md` / `CONTRIBUTING.md` / `RELEASE.md` 是否仍符合当前发布策略
+7. 检查 npm Trusted Publishing 是否已绑定当前仓库与 `.github/workflows/publish.yml`
+8. 如启用了 GitHub environment 保护，检查 `npm-publish` environment 配置是否正确

@@ -66,9 +66,10 @@ test('site adapters use the capabilities facade instead of helper internals', ()
 });
 
 
-test('site adapters use the capabilities facade instead of runner internals', () => {
+test('site-facing modules use the capabilities facade instead of runner internals', () => {
   const found = [];
-  for (const { relative, source } of adapterSourceFiles()) {
+  for (const { relative, source } of siteSourceFiles()) {
+    if (relative === 'src/sites/capabilities.ts') continue;
     if (/from ['"]\.\/runner\.js['"]/.test(source) || /import\(['"]\.\/runner\.js['"]\)/.test(source)) {
       found.push(relative);
     }
@@ -102,9 +103,10 @@ test('every site adapter imports the capabilities facade', () => {
   assert.deepEqual(missing, []);
 });
 
-test('site adapters take site-facing types from the capabilities facade', () => {
+test('site-facing modules take site-facing types from the capabilities facade', () => {
   const found = [];
-  for (const { relative, source } of adapterSourceFiles()) {
+  for (const { relative, source } of siteSourceFiles()) {
+    if (relative === 'src/sites/capabilities.ts' || relative === 'src/sites/runner.ts') continue;
     if (/from ['"]\.\/types\.js['"]/.test(source)) {
       found.push(relative);
     }

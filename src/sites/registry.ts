@@ -16,11 +16,11 @@ import { secAdapter } from './sec.js';
 import { sunoAdapter } from './suno.js';
 import { telegramAdapter } from './telegram.js';
 import { twitterAdapter, xAdapter } from './twitter.js';
-import type { SiteAdapter } from './types.js';
+import type { SiteAdapter } from './capabilities.js';
+import { runSiteCommand } from './capabilities.js';
 import { xhsAdapter } from './xhs.js';
 import { xueqiuAdapter } from './xueqiu.js';
 import { youtubeAdapter } from './youtube.js';
-import { runSiteCommand } from './runner.js';
 
 export const siteAdapters: SiteAdapter[] = [
   alibaba1688Adapter,
