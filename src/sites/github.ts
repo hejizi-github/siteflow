@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, fetchJson, siteReceipt } from './http-utils.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, fetchJson, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'github';
 const API = 'https://api.github.com';
@@ -133,31 +132,26 @@ export const githubAdapter: SiteAdapter = {
   commands: [
     { name: 'trending', description: 'Collect GitHub Trending repositories', configure(command: Command): void {
       addSitePageIdOption(command.option('--language <lang>', 'trending language path').option('--since <daily|weekly|monthly>', 'time range', 'daily').option('--limit <n>', 'number of repos', '25')).action(async function () {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runTrending(ctx, this.opts<TrendingOptions>()));
       });
     } },
     { name: 'repo', description: 'Collect one GitHub repository', configure(command: Command): void {
       command.argument('<repo>').action(async function (repo: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runRepo(ctx, { repo }));
       });
     } },
     { name: 'releases', description: 'Collect GitHub releases', configure(command: Command): void {
       command.argument('<repo>').option('--limit <n>', 'number of releases', '20').action(async function (repo: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runReleases(ctx, { ...this.opts<LimitOptions>(), repo }));
       });
     } },
     { name: 'issues', description: 'Collect GitHub issues', configure(command: Command): void {
       command.argument('<repo>').option('--state <state>', 'open, closed, or all', 'open').option('--limit <n>', 'number of issues', '30').action(async function (repo: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runIssues(ctx, { ...this.opts<Omit<IssuesOptions, 'repo'>>(), repo }));
       });
     } },
     { name: 'search-repos', description: 'Search GitHub repositories', configure(command: Command): void {
       command.argument('<query>').option('--sort <sort>', 'stars, forks, updated', 'stars').option('--limit <n>', 'number of repos', '20').action(async function (query: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSearchRepos(ctx, { ...this.opts<Omit<SearchOptions, 'query'>>(), query }));
       });
     } },

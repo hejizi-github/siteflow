@@ -2,10 +2,9 @@ import type { Command } from 'commander';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { evaluateSiteExpression, readSiteNetworkPart, listSiteNetwork, openSitePage } from './capabilities.js';
-import type { NetworkEntry } from '../shared/types.js';
-import { sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, evaluateSiteExpression, readSiteNetworkPart, listSiteNetwork, openSitePage, sleep } from './capabilities.js';
+import type { NetworkEntry } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'rouman5';
 const ORIGIN = 'https://rouman5.com';
@@ -131,11 +130,7 @@ interface ChapterData {
   images: ChapterImageSummary[];
 }
 
-function clampLimit(value: string | undefined, fallback = 20, max = 50): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(parsed, max));
-}
+const clampLimit = (value: string | undefined, fallback = 20, max = 50): number => clampInt(value, fallback, 1, max);
 
 function clean(value: unknown): string {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -1163,7 +1158,6 @@ export const rouman5Adapter: SiteAdapter = {
       description: 'Check rouman5 public surface, age gate, login entrypoints, robots, and sitemap',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runStatus(ctx));
         });
       },
@@ -1175,7 +1169,6 @@ export const rouman5Adapter: SiteAdapter = {
         command
           .option('--limit <n>', 'number of comic cards to return', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHome(ctx, this.opts<LimitOptions>()));
           });
       },
@@ -1188,7 +1181,6 @@ export const rouman5Adapter: SiteAdapter = {
           .argument('<keyword>', 'search keyword')
           .option('--limit <n>', 'number of result cards to return', '20')
           .action(async function (keyword: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<LimitOptions>(), keyword }));
           });
       },
@@ -1200,7 +1192,6 @@ export const rouman5Adapter: SiteAdapter = {
         command
           .argument('<url-or-id>', 'comic detail URL or book id')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runComic(ctx, { target }));
           });
       },
@@ -1212,7 +1203,6 @@ export const rouman5Adapter: SiteAdapter = {
         command
           .argument('<url-or-id>', 'comic detail URL or book id')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runChapters(ctx, { target }));
           });
       },
@@ -1225,7 +1215,6 @@ export const rouman5Adapter: SiteAdapter = {
           .argument('<url-or-id>', 'chapter URL, book id, or bookId/chapterIndex')
           .option('--metadata-only', 'only collect metadata; this adapter always behaves this way', true)
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runChapter(ctx, { ...this.opts<ChapterOptions>(), target }));
           });
       },
@@ -1240,7 +1229,6 @@ export const rouman5Adapter: SiteAdapter = {
           .option('--apply', 'actually download images (default is dry-run)')
           .option('--i-have-rights', 'confirm you have rights to download this content')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDownload(ctx, { ...this.opts<DownloadOptions>(), target }));
           });
       },
@@ -1259,7 +1247,6 @@ export const rouman5Adapter: SiteAdapter = {
           .option('--apply', 'actually download images (default is dry-run)')
           .option('--i-have-rights', 'confirm you have rights to download this content')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDownloadBook(ctx, { ...this.opts<DownloadBookOptions>(), target }));
           });
       },

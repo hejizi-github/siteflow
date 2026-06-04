@@ -2,8 +2,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { clampInt, siteReceipt } from './http-utils.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, siteReceipt } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'media';
 
@@ -316,7 +316,6 @@ export const mediaAdapter: SiteAdapter = {
           .argument('<url>', 'media URL or .m3u8 manifest URL')
           .option('--out <dir>', 'write a JSON receipt to this directory')
           .action(async function (url: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runInspect(ctx, { ...this.opts<Omit<MediaOptions, 'url'>>(), url }));
           });
       },
@@ -332,7 +331,6 @@ export const mediaAdapter: SiteAdapter = {
           .option('--max-bytes <mb>', 'download size limit in MiB', '200')
           .option('--i-have-rights', 'confirm you are authorized to download and store this media')
           .action(async function (url: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDownload(ctx, { ...this.opts<Omit<MediaOptions, 'url'>>(), url }));
           });
       },

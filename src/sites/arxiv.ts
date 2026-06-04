@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression, openSitePage } from './capabilities.js';
-import { sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, evaluateSiteExpression, openSitePage, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'arxiv';
 const ORIGIN = 'https://arxiv.org';
@@ -26,11 +25,7 @@ interface PdfOptions {
   apply?: boolean;
 }
 
-function clampLimit(value: string | undefined, fallback = 25, max = 100): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(parsed, max));
-}
+const clampLimit = (value: string | undefined, fallback = 25, max = 100): number => clampInt(value, fallback, 1, max);
 
 function normalizeId(id: string): string {
   return id.trim().replace(/^https?:\/\/arxiv\.org\/(?:abs|pdf)\//, '').replace(/\.pdf$/, '');
@@ -255,7 +250,6 @@ export const arxivAdapter: SiteAdapter = {
           .argument('<query>', 'search query')
           .option('--limit <n>', 'number of papers to return', '25')
           .action(async function (query: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Pick<SearchOptions, 'limit'>>(), query }));
           });
       },
@@ -267,7 +261,6 @@ export const arxivAdapter: SiteAdapter = {
         command
           .argument('<id>', 'arXiv id or abs/pdf URL')
           .action(async function (id: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runPaper(ctx, { id }));
           });
       },
@@ -280,7 +273,6 @@ export const arxivAdapter: SiteAdapter = {
           .option('--category <cat>', 'arXiv category such as cs, cs.AI, stat.ML', 'cs')
           .option('--limit <n>', 'number of papers to return', '25')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runLatest(ctx, this.opts<LatestOptions>()));
           });
       },
@@ -294,7 +286,6 @@ export const arxivAdapter: SiteAdapter = {
           .option('--out <path>', 'planned output path')
           .option('--apply', 'request file download; not implemented yet')
           .action(async function (id: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runPdf(ctx, { ...this.opts<Omit<PdfOptions, 'id'>>(), id }));
           });
       },

@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, fetchText, parseJsonp, siteReceipt } from './http-utils.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
+import { runSiteCommand, clampInt, fetchText, parseJsonp, siteReceipt } from './capabilities.js';
 
 const SITE = 'eastmoney';
 const UA = 'siteflow eastmoney read-only adapter';
@@ -147,7 +147,6 @@ function symbolCommand(name: string, description: string, runner: (ctx: SiteComm
     command.argument('<symbol>', 'stock symbol, e.g. 600519.SH or SH600519');
     if (withLimit) command.option('--limit <n>', 'number of records', '20');
     command.action(async function (symbol: string) {
-      const { runSiteCommand } = await import('./runner.js');
       await runSiteCommand(this, ctx => runner(ctx, { ...this.opts<Omit<LimitSymbolOptions, 'symbol'>>(), symbol }));
     });
   } };
@@ -160,13 +159,11 @@ export const eastmoneyAdapter: SiteAdapter = {
   commands: [
     { name: 'quote', description: 'Collect Eastmoney quote data', configure(command: Command): void {
       command.argument('<symbol>').action(async function (symbol: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runQuote(ctx, { symbol }));
       });
     } },
     { name: 'kline', description: 'Collect Eastmoney K-line data', configure(command: Command): void {
       command.argument('<symbol>').option('--period <day|week|month|minute>', 'period', 'day').option('--limit <n>', 'number of rows', '120').action(async function (symbol: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runKline(ctx, { ...this.opts<Omit<KlineOptions, 'symbol'>>(), symbol }));
       });
     } },

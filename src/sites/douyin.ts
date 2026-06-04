@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import {
+  runSiteCommand,
   uploadSiteTarget,
   captureSiteScreenshot,
   clickSiteTarget,
@@ -9,7 +10,7 @@ import {
   sleep,
   typeIntoSiteTarget,
 } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 interface DouyinImageDraftOptions {
   title?: string;
@@ -772,7 +773,6 @@ export const douyinAdapter: SiteAdapter = {
       description: 'Observe current Douyin creator upload page',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, runStatus);
         });
       },
@@ -789,7 +789,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--resume-existing', 'continue editing an existing unpublished image-text post')
           .option('--screenshot <path>', 'save screenshot receipt')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runImagePublish(ctx, this.opts<DouyinImageDraftOptions>()));
           });
       },
@@ -806,7 +805,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--resume-existing', 'continue editing an existing unpublished video post')
           .option('--screenshot <path>', 'save screenshot receipt')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runVideoPublish(ctx, this.opts<DouyinVideoDraftOptions>()));
           });
       },
@@ -822,7 +820,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--resume-existing', 'continue editing an existing unpublished article')
           .option('--screenshot <path>', 'save screenshot receipt')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runArticlePublish(ctx, this.opts<DouyinArticleDraftOptions>()));
           });
       },
@@ -834,7 +831,6 @@ export const douyinAdapter: SiteAdapter = {
         command
           .option('--limit <n>', 'maximum works to return', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runWorks(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -846,7 +842,6 @@ export const douyinAdapter: SiteAdapter = {
         command
           .option('--limit <n>', 'maximum works to return', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runList(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -859,7 +854,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--range <range>', 'requested range label, usually current|yesterday|7d|30d', 'current')
           .option('--limit <n>', 'maximum hot topics/videos to return', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runOverview(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -871,7 +865,6 @@ export const douyinAdapter: SiteAdapter = {
         command
           .option('--range <range>', 'requested range label, usually current|7d|30d', 'current')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runContentAnalytics(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -884,7 +877,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--range <range>', 'requested range label, usually current|7d|30d', 'current')
           .option('--limit <n>', 'maximum hot topics/videos to return', '10')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runStats(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -896,7 +888,6 @@ export const douyinAdapter: SiteAdapter = {
         command
           .option('--limit <n>', 'maximum hot videos to return', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runInspiration(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -909,7 +900,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--type <type>', 'all, realtime, or rising', 'all')
           .option('--limit <n>', 'maximum index items to return', '30')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runIndex(ctx, this.opts<DouyinReadOptions>()));
           });
       },
@@ -922,7 +912,6 @@ export const douyinAdapter: SiteAdapter = {
           .option('--type <type>', 'all, realtime, or rising', 'all')
           .option('--limit <n>', 'maximum items per source', '10')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runIdeas(ctx, this.opts<DouyinReadOptions>()));
           });
       },

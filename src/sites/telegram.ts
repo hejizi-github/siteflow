@@ -1,9 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { evaluateSiteExpression, listSiteNetwork, listSitePages, navigateSitePage, openSitePage } from './capabilities.js';
-import { sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, evaluateSiteExpression, listSiteNetwork, listSitePages, navigateSitePage, openSitePage, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'telegram';
 const ORIGIN = 'https://t.me';
@@ -70,17 +69,9 @@ type WebCollectedMessage = {
   media: WebMediaItem[];
 };
 
-function clampLimit(value: string | undefined, fallback = 20, max = 100): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(parsed, max));
-}
+const clampLimit = (value: string | undefined, fallback = 20, max = 100): number => clampInt(value, fallback, 1, max);
 
-function clampIndex(value: string | undefined, fallback = 0, max = Number.MAX_SAFE_INTEGER): number {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.min(Math.floor(parsed), max));
-}
+const clampIndex = (value: string | undefined, fallback = 0, max = Number.MAX_SAFE_INTEGER): number => clampInt(value, fallback, 0, max);
 
 function optionalPageId(value: string | undefined): number | undefined {
   if (!value) return undefined;
@@ -89,11 +80,7 @@ function optionalPageId(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function clampPages(value: string | undefined): number {
-  const parsed = Number(value ?? 0);
-  if (!Number.isInteger(parsed)) return 0;
-  return Math.max(0, Math.min(parsed, 200));
-}
+const clampPages = (value: string | undefined): number => clampInt(value, 0, 0, 200);
 
 function scrollDirection(value: string | undefined): 'up' | 'down' {
   return String(value || 'up').toLowerCase() === 'down' ? 'down' : 'up';
@@ -947,7 +934,6 @@ export const telegramAdapter: SiteAdapter = {
         command
           .option('--limit <n>', 'number of visible chats to return', '50')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runChats(ctx, this.opts<ChatsOptions>()));
           });
       },
@@ -959,7 +945,6 @@ export const telegramAdapter: SiteAdapter = {
         command
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runOpen(ctx, { target }));
           });
       },
@@ -976,7 +961,6 @@ export const telegramAdapter: SiteAdapter = {
           .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runMessages(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
           });
       },
@@ -993,7 +977,6 @@ export const telegramAdapter: SiteAdapter = {
           .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runLinks(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
           });
       },
@@ -1010,7 +993,6 @@ export const telegramAdapter: SiteAdapter = {
           .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runMedia(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
           });
       },
@@ -1030,7 +1012,6 @@ export const telegramAdapter: SiteAdapter = {
           .option('--max-messages <n>', 'maximum deduped messages returned across the whole watch run', '1000')
           .option('--out <file>', 'write watch data to a JSON file after every polling round')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runWatch(ctx, { ...this.opts<Omit<WatchOptions, 'target'>>(), target }));
           });
       },
@@ -1043,7 +1024,6 @@ export const telegramAdapter: SiteAdapter = {
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .argument('[link-index]', 'global link index from siteflow telegram links', '0')
           .action(async function (target: string, linkIndex: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runOpenLink(ctx, { target, linkIndex }));
           });
       },
@@ -1056,7 +1036,6 @@ export const telegramAdapter: SiteAdapter = {
           .argument('<channel-or-url>', 'public channel username, @handle, or t.me/s URL')
           .option('--limit <n>', 'number of visible posts to return', '20')
           .action(async function (channel: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runChannel(ctx, { ...this.opts<Pick<ChannelOptions, 'limit'>>(), channel }));
           });
       },
@@ -1070,7 +1049,6 @@ export const telegramAdapter: SiteAdapter = {
           .argument('<query>', 'keyword to search inside the channel')
           .option('--limit <n>', 'number of visible posts to return', '20')
           .action(async function (channel: string, query: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Pick<SearchOptions, 'limit'>>(), channel, query }));
           });
       },
@@ -1084,7 +1062,6 @@ export const telegramAdapter: SiteAdapter = {
           .argument('[post-id]', 'post id when the first argument is only a channel')
           .option('--limit <n>', 'number of visible surrounding posts to return', '25')
           .action(async function (target: string, postId?: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runPost(ctx, { ...this.opts<Pick<PostOptions, 'limit'>>(), target, postId }));
           });
       },

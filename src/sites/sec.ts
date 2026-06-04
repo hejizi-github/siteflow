@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, downloadFile, fetchJson, siteReceipt } from './http-utils.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
+import { runSiteCommand, clampInt, downloadFile, fetchJson, siteReceipt } from './capabilities.js';
 
 const SITE = 'sec';
 const DATA = 'https://data.sec.gov';
@@ -153,31 +153,26 @@ export const secAdapter: SiteAdapter = {
   commands: [
     { name: 'company', description: 'Collect SEC company metadata by ticker or CIK', configure(command: Command): void {
       command.argument('<ticker-or-cik>').action(async function (tickerOrCik: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runCompany(ctx, { tickerOrCik }));
       });
     } },
     { name: 'filings', description: 'List recent SEC filings by ticker or CIK', configure(command: Command): void {
       command.argument('<ticker-or-cik>').option('--forms <csv>', 'comma-separated forms such as 10-K,10-Q,8-K').option('--limit <n>', 'number of filings', '20').action(async function (tickerOrCik: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runFilings(ctx, { ...this.opts<Omit<FilingsOptions, 'tickerOrCik'>>(), tickerOrCik }));
       });
     } },
     { name: 'filing', description: 'Build a SEC filing archive receipt', configure(command: Command): void {
       command.argument('<accession>').option('--cik <cik>', 'company CIK').action(async function (accession: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runFiling(ctx, { ...this.opts<Omit<FilingOptions, 'accession'>>(), accession }));
       });
     } },
     { name: 'facts', description: 'Collect SEC XBRL company facts', configure(command: Command): void {
       command.argument('<ticker-or-cik>').option('--concept <name>', 'US-GAAP concept name').action(async function (tickerOrCik: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runFacts(ctx, { ...this.opts<Omit<FactsOptions, 'tickerOrCik'>>(), tickerOrCik }));
       });
     } },
     { name: 'download', description: 'Download one public SEC filing document', configure(command: Command): void {
       command.argument('<accession>').requiredOption('--cik <cik>', 'company CIK').option('--out <dir>', 'output directory').action(async function (accession: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runDownload(ctx, { ...this.opts<Omit<DownloadOptions, 'accession'>>(), accession }));
       });
     } },

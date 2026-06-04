@@ -2,7 +2,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, cleanText } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'cninfo';
 const ORIGIN = 'https://www.cninfo.com.cn';
@@ -70,22 +71,8 @@ interface DisclosureResponse {
   totalpages?: number;
 }
 
-function clampInt(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(Math.floor(parsed), max));
-}
-
 function plainText(value: unknown): string {
-  return String(value || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return cleanText(value);
 }
 
 function normalizeMarket(value: string | undefined): string {
@@ -378,7 +365,6 @@ export const cninfoAdapter: SiteAdapter = {
           .option('--page <n>', 'page number', '1')
           .option('--limit <n>', 'number of announcements', '30')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runLatest(ctx, this.opts<LatestOptions>()));
           });
       },
@@ -392,7 +378,6 @@ export const cninfoAdapter: SiteAdapter = {
           .option('--page <n>', 'page number', '1')
           .option('--limit <n>', 'number of announcements', '30')
           .action(async function (keyword: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
           });
       },
@@ -406,7 +391,6 @@ export const cninfoAdapter: SiteAdapter = {
           .option('--page <n>', 'page number', '1')
           .option('--limit <n>', 'number of announcements', '30')
           .action(async function (code: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runCompany(ctx, { ...this.opts<Omit<CompanyOptions, 'code'>>(), code }));
           });
       },
@@ -418,7 +402,6 @@ export const cninfoAdapter: SiteAdapter = {
         command
           .argument('<target>', 'announcement id, detail URL, or finalpage URL')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runAnnouncement(ctx, { target }));
           });
       },
@@ -431,7 +414,6 @@ export const cninfoAdapter: SiteAdapter = {
           .argument('<target>', 'announcement id, detail URL, or finalpage URL')
           .option('--out <dir>', 'output directory for downloaded PDF')
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runPdf(ctx, { ...this.opts<Omit<PdfOptions, 'target'>>(), target }));
           });
       },

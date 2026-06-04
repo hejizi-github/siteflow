@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression, listSiteNetwork, openSitePage } from './capabilities.js';
-import { sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, evaluateSiteExpression, listSiteNetwork, openSitePage, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'producthunt';
 const ORIGIN = 'https://www.producthunt.com';
@@ -137,7 +136,6 @@ export const producthuntAdapter: SiteAdapter = {
       description: 'Open Product Hunt and report whether public automation is blocked',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runStatus(ctx));
         });
       },
@@ -149,7 +147,6 @@ export const producthuntAdapter: SiteAdapter = {
         command
           .argument('[route-or-url]', 'Product Hunt route or URL', '/')
           .action(async function (route: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runOpen(ctx, { route }));
           });
       },

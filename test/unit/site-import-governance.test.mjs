@@ -9,6 +9,28 @@ const allowedDirectClientImports = new Set([
   'src/sites/capabilities.ts',
   'src/sites/runner.ts',
 ]);
+const supportModules = new Set([
+  'src/sites/capabilities.ts',
+  'src/sites/helpers.ts',
+  'src/sites/http-utils.ts',
+  'src/sites/registry.ts',
+  'src/sites/runner.ts',
+  'src/sites/types.ts',
+]);
+
+function siteSourceFiles() {
+  return fs.readdirSync(sitesDir)
+    .filter(entry => entry.endsWith('.ts'))
+    .map(entry => {
+      const fullPath = path.join(sitesDir, entry);
+      const relative = path.relative(repoRoot, fullPath).replace(/\\/g, '/');
+      return { fullPath, relative, source: fs.readFileSync(fullPath, 'utf8') };
+    });
+}
+
+function adapterSourceFiles() {
+  return siteSourceFiles().filter(file => !supportModules.has(file.relative));
+}
 
 test('direct daemon client imports stay within the explicit allowlist', () => {
   const found = [];
@@ -36,6 +58,83 @@ test('site adapters use the capabilities facade instead of helper internals', ()
     const source = fs.readFileSync(fullPath, 'utf8');
     if (source.includes("from './helpers.js'")) {
       found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+
+test('site adapters use the capabilities facade instead of runner internals', () => {
+  const found = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    if (/from ['"]\.\/runner\.js['"]/.test(source) || /import\(['"]\.\/runner\.js['"]\)/.test(source)) {
+      found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+test('site adapters use the capabilities facade instead of http utility internals', () => {
+  const found = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    if (/from ['"]\.\/http-utils\.js['"]/.test(source)) {
+      found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+test('every site adapter imports the capabilities facade', () => {
+  const missing = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    if (!/from ['"]\.\/capabilities\.js['"]/.test(source)) {
+      missing.push(relative);
+    }
+  }
+
+  missing.sort();
+  assert.deepEqual(missing, []);
+});
+
+test('site adapters take site-facing types from the capabilities facade', () => {
+  const found = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    if (/from ['"]\.\/types\.js['"]/.test(source)) {
+      found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+test('site adapters do not import browser kernel or runtime internals directly', () => {
+  const found = [];
+  for (const { relative, source } of siteSourceFiles()) {
+    const matches = source.matchAll(/from ['"]\.\.\/(runtime|daemon)\/([^'"]+)['"]/g);
+    for (const match of matches) {
+      const importPath = `../${match[1]}/${match[2]}`;
+      if (importPath === '../daemon/client.js' && allowedDirectClientImports.has(relative)) continue;
+      found.push(`${relative} -> ${importPath}`);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+test('site adapters do not import shared internals directly', () => {
+  const found = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    const matches = source.matchAll(/from ['"]\.\.\/shared\/([^'"]+)['"]/g);
+    for (const match of matches) {
+      found.push(`${relative} -> ../shared/${match[1]}`);
     }
   }
 

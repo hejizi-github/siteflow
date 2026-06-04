@@ -1,8 +1,8 @@
 import type { Command } from 'commander';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, siteReceipt } from './http-utils.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
+import { runSiteCommand, clampInt, siteReceipt } from './capabilities.js';
 
 const SITE = 'reddit';
 const ORIGIN = 'https://www.reddit.com';
@@ -179,25 +179,21 @@ export const redditAdapter: SiteAdapter = {
   commands: [
     { name: 'subreddit', description: 'Collect subreddit posts', configure(command: Command): void {
       command.argument('<subreddit>').option('--sort <sort>', 'hot, new, top, rising', 'hot').option('--limit <n>', 'number of posts', '25').action(async function (subreddit: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSubreddit(ctx, { ...this.opts<Omit<SubredditOptions, 'subreddit'>>(), subreddit }));
       });
     } },
     { name: 'search', description: 'Search Reddit posts', configure(command: Command): void {
       command.argument('<query>').option('--subreddit <name>', 'restrict to subreddit').option('--limit <n>', 'number of posts', '25').action(async function (query: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'query'>>(), query }));
       });
     } },
     { name: 'post', description: 'Collect one Reddit post', configure(command: Command): void {
       command.argument('<target>').action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runPost(ctx, { target }));
       });
     } },
     { name: 'comments', description: 'Collect Reddit comments for one post', configure(command: Command): void {
       command.argument('<target>').option('--limit <n>', 'number of comments', '100').action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runComments(ctx, { ...this.opts<Omit<CommentsOptions, 'target'>>(), target }));
       });
     } },

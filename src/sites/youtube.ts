@@ -1,9 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, siteReceipt } from './http-utils.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'youtube';
 
@@ -178,31 +177,26 @@ export const youtubeAdapter: SiteAdapter = {
   commands: [
     { name: 'search', description: 'Search YouTube videos', configure(command: Command): void {
       addSitePageIdOption(command.argument('<keyword>').option('--limit <n>', 'number of videos', '20')).action(async function (keyword: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
       });
     } },
     { name: 'video', description: 'Collect YouTube video page metadata', configure(command: Command): void {
       addSitePageIdOption(command.argument('<target>')).action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runVideo(ctx, { ...this.opts<Omit<TargetOptions, 'target'>>(), target }));
       });
     } },
     { name: 'channel', description: 'Collect YouTube channel page snapshot', configure(command: Command): void {
       addSitePageIdOption(command.argument('<target>')).action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runChannel(ctx, { ...this.opts<Omit<TargetOptions, 'target'>>(), target }));
       });
     } },
     { name: 'comments', description: 'Collect visible YouTube comments', configure(command: Command): void {
       addSitePageIdOption(command.argument('<target>').option('--limit <n>', 'number of comments', '50')).action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runComments(ctx, { ...this.opts<Omit<CommentsOptions, 'target'>>(), target }));
       });
     } },
     { name: 'transcript', description: 'Download available YouTube caption transcript XML', configure(command: Command): void {
       addSitePageIdOption(command.argument('<target>').option('--out <dir>', 'output directory')).action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runTranscript(ctx, { ...this.opts<Omit<TranscriptOptions, 'target'>>(), target }));
       });
     } },

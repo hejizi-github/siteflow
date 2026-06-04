@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import {
+  runSiteCommand,
   captureSiteScreenshot,
   clickSiteTarget,
   ensureSitePage,
@@ -9,7 +10,7 @@ import {
   typeIntoSiteTarget,
   waitForText,
 } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 interface JimengGenerateOptions {
   prompt: string;
@@ -104,7 +105,6 @@ export const jimengAdapter: SiteAdapter = {
           .option('--wait <ms>', 'milliseconds to wait after submit', '60000')
           .option('--submit', 'submit generation after filling')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runGenerate(ctx, this.opts<JimengGenerateOptions>()));
           });
       },
@@ -114,7 +114,6 @@ export const jimengAdapter: SiteAdapter = {
       description: 'Observe current Jimeng page state',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, runStatus);
         });
       },

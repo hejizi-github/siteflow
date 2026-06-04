@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { readSiteSnapshot, sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { evaluateSiteExpression, readSiteNetworkPart, listSiteNetwork, openSitePage } from './capabilities.js';
+import { runSiteCommand, evaluateSiteExpression, listSiteNetwork, openSitePage, readSiteNetworkPart, readSiteSnapshot, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 interface AlibabaSeoOptions {
   keyword: string;
@@ -667,7 +666,6 @@ export const alibaba1688Adapter: SiteAdapter = {
         command
           .option('--limit <n>', 'number of home page items to sample', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHome(ctx, this.opts<AlibabaHomeOptions>()));
           });
       },
@@ -680,7 +678,6 @@ export const alibaba1688Adapter: SiteAdapter = {
           .requiredOption('--keyword <text>', '1688 search keyword')
           .option('--limit <n>', 'number of search result items to sample', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, this.opts<AlibabaSearchOptions>()));
           });
       },
@@ -692,7 +689,6 @@ export const alibaba1688Adapter: SiteAdapter = {
         command
           .requiredOption('--keyword <text>', '1688 search keyword prefix or seed keyword')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSuggest(ctx, this.opts<AlibabaSuggestOptions>()));
           });
       },
@@ -704,7 +700,6 @@ export const alibaba1688Adapter: SiteAdapter = {
         command
           .requiredOption('--offer <id-or-url>', '1688 offerId or product URL')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runProduct(ctx, this.opts<AlibabaProductOptions>()));
           });
       },
@@ -718,7 +713,6 @@ export const alibaba1688Adapter: SiteAdapter = {
           .option('--title <text>', 'current product title to audit')
           .option('--limit <n>', 'number of search result items to sample', '20')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSeo(ctx, this.opts<AlibabaSeoOptions>()));
           });
       },

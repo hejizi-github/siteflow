@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
-import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, cleanText, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'xueqiu';
 const ORIGIN = 'https://xueqiu.com';
@@ -49,27 +49,11 @@ interface FinanceOptions extends SymbolOptions {
   count?: string;
 }
 
-function clampInt(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(Math.floor(parsed), max));
-}
-
 function normalizeSymbol(value: string): string {
   return value.trim().toUpperCase();
 }
 
-function plainText(value: unknown): string {
-  return String(value || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+const plainText = cleanText;
 
 function parseStatusTarget(target: string): { userId?: string; statusId: string; url?: string } {
   const trimmed = target.trim();
@@ -434,7 +418,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect Xueqiu homepage index quotes, hot events, and hot stocks',
       configure(command: Command): void {
         addSitePageIdOption(command.option('--limit <n>', 'number of hot records to return', '10')).action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runHome(ctx, this.opts<LimitOptions>()));
         });
       },
@@ -448,7 +431,6 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--limit <n>', 'number of records to return', '10');
         addSitePageIdOption(command)
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHot(ctx, this.opts<HotOptions>()));
           });
       },
@@ -464,7 +446,6 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--limit <n>', 'number of records to return', '10');
         addSitePageIdOption(command)
           .action(async function (keyword: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
           });
       },
@@ -474,7 +455,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect one Xueqiu stock quote detail',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol, e.g. SH600519')).action(async function (symbol: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runQuote(ctx, { ...this.opts<Omit<SymbolOptions, 'symbol'>>(), symbol }));
         });
       },
@@ -484,7 +464,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect one stock minute chart',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--period <period>', 'minute chart period', '1d')).action(async function (symbol: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runMinute(ctx, { ...this.opts<{ period?: string }>(), symbol }));
         });
       },
@@ -494,7 +473,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect recent stock trade ticks',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of trades', '10')).action(async function (symbol: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runTrades(ctx, { ...this.opts<Omit<TradesOptions, 'symbol'>>(), symbol }));
         });
       },
@@ -504,7 +482,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect realtime order book / pankou for one stock',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol')).action(async function (symbol: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runOrderbook(ctx, { ...this.opts<Omit<SymbolOptions, 'symbol'>>(), symbol }));
         });
       },
@@ -520,7 +497,6 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--sort <time|hot>', 'discussion sort', 'time');
         addSitePageIdOption(command)
           .action(async function (symbol: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDiscussions(ctx, { ...this.opts<Omit<DiscussionsOptions, 'symbol'>>(), symbol }));
           });
       },
@@ -530,7 +506,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect one Xueqiu status page snapshot',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<status-url-or-id>', 'status URL or <userId>/<statusId> target')).action(async function (target: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runStatus(ctx, { ...this.opts<Omit<StatusOptions, 'target'>>(), target }));
         });
       },
@@ -545,7 +520,6 @@ export const xueqiuAdapter: SiteAdapter = {
           .option('--max-id <id>', 'comment cursor max_id', '-1');
         addSitePageIdOption(command)
           .action(async function (target: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runComments(ctx, { ...this.opts<Omit<CommentsOptions, 'target'>>(), target }));
           });
       },
@@ -555,7 +529,6 @@ export const xueqiuAdapter: SiteAdapter = {
       description: 'Collect Xueqiu financial indicators for one stock',
       configure(command: Command): void {
         addSitePageIdOption(command.argument('<symbol>', 'Xueqiu symbol').option('--count <n>', 'number of reports', '5')).action(async function (symbol: string) {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, ctx => runFinance(ctx, { ...this.opts<Omit<FinanceOptions, 'symbol'>>(), symbol }));
         });
       },

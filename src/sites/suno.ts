@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import {
+  runSiteCommand,
   captureSiteScreenshot,
   clickSiteTarget,
   detectSiteCaptcha,
@@ -9,7 +10,7 @@ import {
   sleep,
   typeIntoSiteTarget,
 } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 interface SunoCreateOptions {
   lyrics?: string;
@@ -189,7 +190,6 @@ export const sunoAdapter: SiteAdapter = {
           .option('--wait <ms>', 'milliseconds to wait after submit', '45000')
           .option('--submit', 'clickSiteTarget Create song after filling')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runCreate(ctx, this.opts<SunoCreateOptions>()));
           });
       },
@@ -199,7 +199,6 @@ export const sunoAdapter: SiteAdapter = {
       description: 'Observe current Suno page, captcha state, and recent errors',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, runStatus);
         });
       },

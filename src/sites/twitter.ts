@@ -2,17 +2,22 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Command } from 'commander';
 import {
+  runSiteCommand,
   captureSiteScreenshot,
   ensureSitePage,
   evaluateInSitePage,
+  listSiteNetwork,
   openSitePage,
   readRecentSiteErrors,
+  readSiteNetworkPart,
   readSiteSnapshot,
+  reloadSitePage,
+  replaySiteRequestWithBody,
+  replaySiteRequestWithUrl,
   sleep,
 } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { readSiteNetworkPart, listSiteNetwork, reloadSitePage, replaySiteRequestWithBody, replaySiteRequestWithUrl } from './capabilities.js';
-import type { NetworkEntry } from '../shared/types.js';
+import type { NetworkEntry } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const twitterDeps = {
   captureSiteScreenshot,
@@ -2509,7 +2514,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--url <url>', 'X/Twitter URL to open before observing')
           .option('--screenshot <path>', 'save screenshot')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runStatus(ctx, this.opts<TwitterStatusOptions>()));
           });
       },
@@ -2527,7 +2531,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--out <path>', 'write normalized DOM collection JSON')
           .option('--screenshot <path>', 'save screenshot')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runCollect(ctx, this.opts<TwitterCollectOptions>()));
           });
       },
@@ -2545,7 +2548,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--out <path>', 'write normalized DOM collection JSON')
           .option('--screenshot <path>', 'save screenshot')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runSearch(ctx, this.opts<TwitterSearchOptions>()));
           });
       },
@@ -2559,7 +2561,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--match <regex>', 'network URL regex to scan', 'HomeTimeline|SearchTimeline|UserTweets|TweetDetail|graphql')
           .option('--out <path>', 'write normalized API capture JSON')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runApiCapture(ctx, this.opts<TwitterApiCaptureOptions>()));
           });
       },
@@ -2575,7 +2576,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--match <regex>', 'network URL regex to scan', 'TweetDetail|TweetResultByRestId|graphql')
           .option('--out <path>', 'write normalized detail capture JSON')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDetail(ctx, this.opts<TwitterDetailOptions>()));
           });
       },
@@ -2591,7 +2591,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--reload', 'reload the selected home page before checkpointing')
           .option('--no-open', 'do not open https://x.com/home before scanning network')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHomeCheckpoint(ctx, this.opts<TwitterHomeCheckpointOptions>()));
           });
       },
@@ -2608,7 +2607,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--reload', 'reload the selected home page before diffing')
           .option('--no-open', 'do not open https://x.com/home before scanning network')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHomeDiff(ctx, this.opts<TwitterHomeDiffOptions>()));
           });
       },
@@ -2624,7 +2622,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--count <n>', 'requested item count, capped at 40', '20')
           .option('--delay-ms <ms>', 'minimum delay before replaying the request', '3000')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runHomePage(ctx, this.opts<TwitterHomePageOptions>()));
           });
       },
@@ -2640,7 +2637,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--limit <n>', 'network entries to scan', '1000')
           .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runProfileCheckpoint(ctx, this.opts<TwitterProfileCheckpointOptions>()));
           });
       },
@@ -2656,7 +2652,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--count <n>', 'requested item count, capped at 40', '20')
           .option('--delay-ms <ms>', 'minimum delay before replaying the request', '3000')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runProfilePage(ctx, this.opts<TwitterProfilePageOptions>()));
           });
       },
@@ -2673,7 +2668,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--limit <n>', 'network entries to scan', '1000')
           .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runProfileDiff(ctx, this.opts<TwitterProfileDiffOptions>()));
           });
       },
@@ -2688,7 +2682,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--type <regex>', 'only include media type matching this regex, e.g. photo|video')
           .option('--out <path>', 'write normalized media JSON')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runMediaList(ctx, this.opts<TwitterMediaListOptions>()));
           });
       },
@@ -2708,7 +2701,6 @@ export const twitterAdapter: SiteAdapter = {
           .option('--limit <n>', 'maximum media resources to consider', '20')
           .option('--max-bytes <n>', 'maximum bytes per downloaded file', '200000000')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runMediaDownload(ctx, this.opts<TwitterMediaDownloadOptions>()));
           });
       },
@@ -2733,7 +2725,6 @@ export const xAdapter: SiteAdapter = {
           .option('--out <path>', 'write full JSON result')
           .option('--dir <path>', 'directory for auto-named output files')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runXMore(ctx, this.opts<XMoreOptions>()));
           });
       },
@@ -2751,7 +2742,6 @@ export const xAdapter: SiteAdapter = {
           .option('--count <n>', 'requested item count per cursor page, capped at 40', '20')
           .option('--reload', 'reload Home before capturing the timeline')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runXHome(ctx, this.opts<XHomeOptions>()));
           });
       },
@@ -2770,7 +2760,6 @@ export const xAdapter: SiteAdapter = {
           .option('--page-delay-ms <ms>', 'delay between cursor page requests', '3000')
           .option('--count <n>', 'requested item count per cursor page, capped at 40', '20')
           .action(async function (handle: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runXProfile(ctx, { ...this.opts<Omit<XProfileOptions, 'handle'>>(), handle }));
           });
       },
@@ -2785,7 +2774,6 @@ export const xAdapter: SiteAdapter = {
           .option('--dir <path>', 'directory for auto-named output files')
           .option('--wait <ms>', 'milliseconds to wait for the tweet page to load', '9000')
           .action(async function (url: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runXTweet(ctx, { ...this.opts<Omit<XTweetOptions, 'url'>>(), url }));
           });
       },
@@ -2805,7 +2793,6 @@ export const xAdapter: SiteAdapter = {
           .option('--limit <n>', 'maximum media items to consider', '20')
           .option('--max-bytes <n>', 'maximum bytes per downloaded file', '200000000')
           .action(async function (url: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runXDownload(ctx, { ...this.opts<Omit<XDownloadOptions, 'url'>>(), url }));
           });
       },

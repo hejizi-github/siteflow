@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { addSitePageIdOption, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
-import { clampInt, fetchJson, siteReceipt } from './http-utils.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, fetchJson, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'bilibili';
 const ORIGIN = 'https://www.bilibili.com';
@@ -124,25 +123,21 @@ export const bilibiliAdapter: SiteAdapter = {
   commands: [
     { name: 'search', description: 'Search Bilibili videos through the rendered page', configure(command: Command): void {
       addSitePageIdOption(command.argument('<keyword>').option('--page <n>', 'page number', '1').option('--limit <n>', 'number of videos', '20')).action(async function (keyword: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
       });
     } },
     { name: 'video', description: 'Collect Bilibili video metadata by BV id or URL', configure(command: Command): void {
       command.argument('<target>').action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runVideo(ctx, { target }));
       });
     } },
     { name: 'comments', description: 'Collect Bilibili video comments', configure(command: Command): void {
       command.argument('<target>').option('--limit <n>', 'number of comments', '50').action(async function (target: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runComments(ctx, { ...this.opts<Omit<CommentsOptions, 'target'>>(), target }));
       });
     } },
     { name: 'creator', description: 'Probe Bilibili creator metadata by mid', configure(command: Command): void {
       addSitePageIdOption(command.argument('<mid>')).action(async function (mid: string) {
-        const { runSiteCommand } = await import('./runner.js');
         await runSiteCommand(this, ctx => runCreator(ctx, { ...this.opts<Omit<CreatorOptions, 'mid'>>(), mid }));
       });
     } },

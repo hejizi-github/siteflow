@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
-import { evaluateSiteExpression, openSitePage } from './capabilities.js';
-import { sleep } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import { runSiteCommand, clampInt, evaluateSiteExpression, openSitePage, sleep } from './capabilities.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'hackernews';
 const ORIGIN = 'https://news.ycombinator.com';
@@ -18,11 +17,7 @@ interface UserOptions {
   id: string;
 }
 
-function clampLimit(value: string | undefined, fallback = 30, max = 100): number {
-  const parsed = Number(value || fallback);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(1, Math.min(parsed, max));
-}
+const clampLimit = (value: string | undefined, fallback = 30, max = 100): number => clampInt(value, fallback, 1, max);
 
 async function collectListing(ctx: SiteCommandContext, path: string, limit: number): Promise<{
   url: string;
@@ -231,7 +226,6 @@ export const hackernewsAdapter: SiteAdapter = {
         command
           .option('--limit <n>', 'number of stories to return', '30')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runListing(ctx, name, this.opts<LimitOptions>()));
           });
       },
@@ -243,7 +237,6 @@ export const hackernewsAdapter: SiteAdapter = {
         command
           .argument('<id>', 'HN item id')
           .action(async function (id: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runItem(ctx, { id }));
           });
       },
@@ -255,7 +248,6 @@ export const hackernewsAdapter: SiteAdapter = {
         command
           .argument('<id>', 'HN username')
           .action(async function (id: string) {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runUser(ctx, { id }));
           });
       },

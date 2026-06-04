@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import {
+  runSiteCommand,
   captureSiteScreenshot,
   clickSiteTarget,
   ensureSitePage,
@@ -9,7 +10,7 @@ import {
   typeIntoSiteTarget,
   uploadSiteFiles,
 } from './capabilities.js';
-import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './types.js';
+import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const xhsDeps = {
   captureSiteScreenshot,
@@ -149,7 +150,6 @@ export const xhsAdapter: SiteAdapter = {
           .option('--url <url>', 'creator URL')
           .option('--screenshot <path>', 'save draft screenshot')
           .action(async function () {
-            const { runSiteCommand } = await import('./runner.js');
             await runSiteCommand(this, ctx => runDraft(ctx, this.opts<XhsDraftOptions>()));
           });
       },
@@ -159,7 +159,6 @@ export const xhsAdapter: SiteAdapter = {
       description: 'Observe current Xiaohongshu creator page',
       configure(command: Command): void {
         command.action(async function () {
-          const { runSiteCommand } = await import('./runner.js');
           await runSiteCommand(this, runStatus);
         });
       },
