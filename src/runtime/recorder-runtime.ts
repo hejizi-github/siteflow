@@ -340,9 +340,9 @@ export function recorderInjectionSource(): string {
   }
 
   function selectedOptionTextFor(element) {
-    return element instanceof HTMLSelectElement && element.selectedOptions.length > 0
-      ? normalizedText(element.selectedOptions[0].innerText || element.selectedOptions[0].textContent || '').slice(0, 120) || undefined
-      : undefined;
+    if (!(element instanceof HTMLSelectElement) || element.selectedOptions.length === 0) return undefined;
+    const option = element.selectedOptions[0];
+    return normalizedText(option.label || option.innerText || option.textContent || option.value || '').slice(0, 120) || undefined;
   }
 
   function actionInputTextFor(element) {
@@ -624,13 +624,13 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
     });
     pagesWithRecorderBinding.add(page);
   }
-  activeRecorderSessions.set(page, session);
-  recorderSessionPages.set(session, page);
   const source = recorderInjectionSource();
   await page.addInitScript(source);
   await page.evaluate(source);
   if (options.url) await page.goto(options.url);
   await page.evaluate(() => (globalThis.window as typeof globalThis.window & { __siteflowResetRecorder?: () => unknown }).__siteflowResetRecorder?.());
+  activeRecorderSessions.set(page, session);
+  recorderSessionPages.set(session, page);
 
   return session;
 }

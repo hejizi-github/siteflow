@@ -1080,6 +1080,55 @@ test('recorded select with stable selector omits semantic selected option text',
   ]);
 });
 
+test('recorded select prefers option label over text and value', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'us',
+    selectedOptions: [{
+      label: 'United States',
+      innerText: 'US',
+      textContent: 'US',
+      value: 'us',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.option, 'United States');
+  assert.equal(event.target.semantic.text, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: event.target, option: 'United States' },
+  ]);
+});
+
+test('recorded select normalizes option label whitespace', async () => {
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'enterprise',
+    selectedOptions: [{
+      label: '  Enterprise\n  Plan\t ',
+      innerText: 'ignored',
+      textContent: 'ignored',
+      value: 'enterprise',
+    }],
+    getAttribute: () => undefined,
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+
+  assert.equal(event.option, 'Enterprise Plan');
+  assert.equal(event.target.semantic.text, 'Enterprise Plan');
+});
+
 test('normalizeRecordedEvents omits zero nth from selector-backed select steps', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const target = {
@@ -1408,29 +1457,53 @@ test('recorder input flushes pending scroll before recording value', async () =>
   assert.equal(payloads[1].value, 'hello');
 });
 
-test('startRecorderSession resets installed recorder state before returning active session', async () => {
+test('startRecorderSession ignores initial navigation and reset events before returning active session', async () => {
   const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-reset-'));
   try {
     const calls = [];
+    const pageLoadScroll = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/loaded',
+      title: 'Loaded',
+    };
+    const userClick = {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'Ready' }, confidence: 'high' },
+      url: 'https://example.test/loaded',
+      title: 'Loaded',
+    };
     const page = {
-      async exposeBinding() {},
+      binding: undefined,
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
       async addInitScript(source) {
         calls.push(typeof source);
       },
       async evaluate(arg) {
-        calls.push(typeof arg === 'string' ? 'inject' : arg.toString());
+        calls.push(typeof arg === 'string' ? 'inject' : 'reset');
+        if (this.binding) await this.binding({}, pageLoadScroll);
+      },
+      async goto(url) {
+        calls.push(`goto:${url}`);
+        if (this.binding) await this.binding({}, pageLoadScroll);
       },
       url() {
         return 'https://example.test/start';
       },
     };
 
-    await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json') });
+    const session = await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json'), url: 'https://example.test/loaded' });
+    assert.deepEqual(calls, ['string', 'inject', 'goto:https://example.test/loaded', 'reset']);
+    assert.equal(session.events.length, 0);
 
-    assert.equal(calls[0], 'string');
-    assert.equal(calls[1], 'inject');
-    assert.match(calls[2], /__siteflowResetRecorder/);
+    await page.binding({}, userClick);
+    assert.deepEqual(session.events, [userClick]);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
