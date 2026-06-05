@@ -974,8 +974,8 @@ trace
 
 trace
   .command('export')
-  .description('Export durable session events to a replayable JSON file')
-  .requiredOption('--out <path>', 'output replay JSON file')
+  .description('Export durable session events to a replayable JSON directory')
+  .requiredOption('--out <path>', 'output replay JSON directory')
   .action(async function () {
     await run(this, async opts => {
       const local = this.opts<{ out: string }>();

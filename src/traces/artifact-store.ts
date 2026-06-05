@@ -9,6 +9,9 @@ interface FailureReceiptResult {
   receiptPath: string;
 }
 
+const sensitiveNamePattern = /(?:value|token|secret|password|passwd|auth|authorization|cookie|session|key)/i;
+const traceIdPattern = /^\d{8}T\d{6}-[a-f0-9]{8}$/;
+
 function tracesRoot(profile: string): string {
   return path.join(profileDir(profile), 'traces');
 }
@@ -43,6 +46,55 @@ function appendJsonLine(filePath: string, value: unknown): void {
   fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
+function isSensitiveFlagName(flag: string): boolean {
+  const name = flag.replace(/^-+/, '').split('=')[0] ?? '';
+  return sensitiveNamePattern.test(name);
+}
+
+function redactUrlArg(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+  let redacted = false;
+  for (const key of url.searchParams.keys()) {
+    if (sensitiveNamePattern.test(key)) {
+      url.searchParams.set(key, '[REDACTED]');
+      redacted = true;
+    }
+  }
+  return redacted ? url.toString() : value;
+}
+
+export function redactCommandArgs(command: string[]): string[] {
+  const redacted: string[] = [];
+  let redactNext = false;
+  for (const arg of command) {
+    if (redactNext) {
+      redacted.push('[REDACTED]');
+      redactNext = false;
+      continue;
+    }
+
+    if (arg.startsWith('--') && arg.includes('=')) {
+      const [flag] = arg.split('=', 1);
+      redacted.push(isSensitiveFlagName(flag) ? `${flag}=[REDACTED]` : redactUrlArg(arg));
+      continue;
+    }
+
+    if (arg.startsWith('--') && isSensitiveFlagName(arg)) {
+      redacted.push(arg);
+      redactNext = true;
+      continue;
+    }
+
+    redacted.push(redactUrlArg(arg));
+  }
+  return redacted;
+}
+
 export function appendTraceEvent(profile: string, type: string, data: Record<string, unknown>, replay?: TraceReplayStep): void {
   const event: TraceEvent = {
     ts: nowIso(),
@@ -60,11 +112,12 @@ export function writeFailureReceipt(profile: string, command: string[], error: S
     const dir = traceDir(profile, traceId);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const receiptPath = path.join(dir, 'receipt.json');
+    const redactedCommand = redactCommandArgs(command);
     const receipt: TraceReceipt = {
       traceId,
       status: 'failure',
       profile,
-      command,
+      command: redactedCommand,
       error: {
         code: error.code,
         message: error.message,
@@ -80,8 +133,8 @@ export function writeFailureReceipt(profile: string, command: string[], error: S
       '',
       `- Profile: ${profile}`,
       `- Created at: ${receipt.createdAt}`,
-      `- Command: \`${command.join(' ')}\``,
-      `- Error: ${error.code} — ${error.message}`,
+      `- Command: \`${redactedCommand.join(' ')}\``,
+      `- Error: ${error.code} - ${error.message}`,
       error.hint ? `- Hint: ${error.hint}` : '',
     ].filter(Boolean).join('\n');
     fs.writeFileSync(summaryPath, `${summary}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -99,7 +152,19 @@ export function listTraceReceipts(profile: string): Array<{ traceId: string; cre
     .map(entry => {
       const receiptPath = path.join(root, entry.name, 'receipt.json');
       if (!fs.existsSync(receiptPath)) return null;
-      const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as TraceReceipt;
+      let receipt: TraceReceipt;
+      try {
+        receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as TraceReceipt;
+      } catch {
+        return null;
+      }
+      if (
+        typeof receipt.traceId !== 'string'
+        || typeof receipt.createdAt !== 'string'
+        || typeof receipt.receiptPath !== 'string'
+      ) {
+        return null;
+      }
       return { traceId: receipt.traceId, createdAt: receipt.createdAt, receiptPath };
     })
     .filter((item): item is { traceId: string; createdAt: string; receiptPath: string } => Boolean(item))
@@ -107,6 +172,7 @@ export function listTraceReceipts(profile: string): Array<{ traceId: string; cre
 }
 
 export function getTraceReceipt(profile: string, traceId: string): TraceReceipt {
+  if (!traceIdPattern.test(traceId)) throw new SiteflowError('TRACE_NOT_FOUND', `Trace receipt not found for ${traceId}`);
   const receiptPath = path.join(tracesRoot(profile), traceId, 'receipt.json');
   if (!fs.existsSync(receiptPath)) throw new SiteflowError('TRACE_NOT_FOUND', `Trace receipt not found for ${traceId}`);
   return JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as TraceReceipt;
@@ -116,7 +182,13 @@ export function listTraceEvents(profile: string, limit = 100): TraceEvent[] {
   const eventsPath = traceEventPath(profile);
   if (!fs.existsSync(eventsPath)) return [];
   const lines = fs.readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean);
-  return lines.slice(-Math.max(1, limit)).map(line => JSON.parse(line) as TraceEvent);
+  return lines.slice(-Math.max(1, limit)).flatMap(line => {
+    try {
+      return [JSON.parse(line) as TraceEvent];
+    } catch {
+      return [];
+    }
+  });
 }
 
 export function exportTraceEvents(profile: string, outDir: string): { outDir: string; eventsPath: string; count: number } {
