@@ -253,6 +253,19 @@ export function recorderInjectionSource(): string {
       || hasSensitiveMarker(element.getAttribute('placeholder'));
   }
 
+  function isTextLikeInput(element) {
+    if (!(element instanceof HTMLInputElement)) return false;
+    const type = (element.getAttribute('type') || element.type || 'text').toLowerCase();
+    return type === 'text'
+      || type === 'search'
+      || type === 'email'
+      || type === 'url'
+      || type === 'tel'
+      || type === 'number'
+      || type === 'password';
+  }
+
+
   function editableAncestorFor(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     if (element.isContentEditable) return element;
@@ -268,7 +281,10 @@ export function recorderInjectionSource(): string {
       return { element, control: 'select', option, sensitive: isSensitiveControl(element) };
     }
     if (element instanceof HTMLTextAreaElement) return { element, control: 'textarea', sensitive: isSensitiveControl(element) };
-    if (element instanceof HTMLInputElement) return { element, control: 'input', sensitive: isSensitiveControl(element) };
+    if (element instanceof HTMLInputElement) {
+      if (!isTextLikeInput(element)) return { element, unsupported: true, sensitive: isSensitiveControl(element) };
+      return { element, control: 'input', sensitive: isSensitiveControl(element) };
+    }
     const editable = editableAncestorFor(element);
     if (editable) return { element: editable, control: 'contenteditable', sensitive: isSensitiveControl(editable) };
     return { element, sensitive: isSensitiveControl(element) };
@@ -278,13 +294,13 @@ export function recorderInjectionSource(): string {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     const rect = element.getBoundingClientRect();
-    const selectedOptionText = control === 'select' ? selectedOptionTextFor(element) : undefined;
+    const selector = selectorFor(element);
+    const selectedOptionText = control === 'select' && !selector ? selectedOptionTextFor(element) : undefined;
     const text = control ? selectedOptionText : normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
     const placeholder = element.getAttribute('placeholder') || undefined;
     const role = element.getAttribute('role') || undefined;
-    const selector = selectorFor(element);
     return {
       semantic: {
         ...(role ? { role } : {}),
@@ -329,6 +345,7 @@ export function recorderInjectionSource(): string {
 
   function recordValueEvent(event) {
     const info = controlInfoFor(event.target);
+    if (info.unsupported) return;
     const target = targetFor(info.element || event.target, info.control);
     const value = info.control === 'contenteditable' && info.element
       ? contenteditableValueFor(info.element)

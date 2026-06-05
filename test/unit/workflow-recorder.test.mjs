@@ -27,7 +27,7 @@ function fakeRecordedElement(overrides = {}) {
   };
 }
 
-async function recordFixtureEvent(element, type) {
+async function recordFixturePayloads(element, type) {
   const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
   const payloads = [];
   const listeners = {};
@@ -58,6 +58,11 @@ async function recordFixtureEvent(element, type) {
 
   runInContext(recorderInjectionSource(), context);
   listeners[type]({ type, target: element });
+  return payloads;
+}
+
+async function recordFixtureEvent(element, type) {
+  const payloads = await recordFixturePayloads(element, type);
   assert.equal(payloads.length, 1);
   return payloads[0];
 }
@@ -828,6 +833,79 @@ test('recorded select without stable selector normalizes with semantic selected 
   assert.deepEqual(steps, [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
+  ]);
+});
+
+test('recorded select with stable selector omits semantic selected option text', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'select');
+  assert.equal(event.option, 'Canada');
+  assert.equal(event.target.structural.selector, 'select[name="country"]');
+  assert.equal(event.target.semantic.text, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
+  ]);
+});
+
+test('recorded checkbox radio and file input changes are skipped', async () => {
+  for (const type of ['checkbox', 'radio', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type,
+      value: type === 'file' ? '/tmp/private.txt' : 'on',
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'name') return `${type}-control`;
+        return undefined;
+      },
+    }));
+
+    assert.deepEqual(await recordFixturePayloads(input, 'change'), []);
+  }
+});
+
+test('recorded text-like input normalizes to type step', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'email',
+    value: 'user@example.test',
+    getAttribute: (name) => {
+      if (name === 'type') return 'email';
+      if (name === 'name') return 'email';
+      if (name === 'placeholder') return 'Email';
+      return undefined;
+    },
+  }));
+
+  const event = await recordFixtureEvent(input, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'input');
+  assert.equal(event.value, 'user@example.test');
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'type', target: event.target, value: 'user@example.test', clear: true },
   ]);
 });
 
