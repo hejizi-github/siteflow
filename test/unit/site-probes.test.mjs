@@ -197,7 +197,8 @@ test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
   ]);
   assert.deepEqual(result.evidence, {
     count: 4,
-    limit: 5,
+    limit: 15,
+    requestedLimit: 5,
     root: 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title',
   });
   assert.equal(JSON.stringify(result.evidence).includes('First'), false);
@@ -218,6 +219,32 @@ test('youtubeSearchResults rejects non-youtube and unsafe video hrefs', async ()
   }, { limit: 5 });
 
   assert.deepEqual(result.videos.map(video => video.id), ['abc123', 'def456']);
+});
+
+test('youtubeSearchResults preserves requested unique limit after dedupe', async () => {
+  const expressions = [];
+  const result = await youtubeSearchResults({
+    profile: 'default',
+    evaluate: async (_profile, expression) => {
+      expressions.push(expression);
+      return { value: {
+        rows: [
+          { title: 'One container', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
+          { title: 'One anchor', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
+          { title: 'Two container', href: 'https://www.youtube.com/watch?v=def456', channel: '', metadata: '' },
+          { title: 'Two anchor', href: 'https://www.youtube.com/watch?v=def456', channel: '', metadata: '' },
+          { title: 'Three', href: 'https://www.youtube.com/watch?v=ghi789', channel: '', metadata: '' },
+        ],
+        count: 5,
+      } };
+    },
+  }, { limit: 3 });
+
+  assert.deepEqual(result.videos.map(video => video.id), ['abc123', 'def456', 'ghi789']);
+  assert.equal(result.videos.length, 3);
+  assert.equal(expressions[0].includes('Math.min(9,'), true);
+  assert.equal(result.evidence.requestedLimit, 3);
+  assert.equal(JSON.stringify(result.evidence).includes('One container'), false);
 });
 
 test('youtubeComments returns visible comments and small evidence', async () => {

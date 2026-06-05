@@ -24,10 +24,12 @@ export interface YouTubeComment {
   time: string;
 }
 
-export async function youtubeSearchResults(page: ProbePage, options: YouTubeProbeOptions): Promise<{ videos: YouTubeVideo[]; evidence: ExtractListResult['evidence'] }> {
+export async function youtubeSearchResults(page: ProbePage, options: YouTubeProbeOptions): Promise<{ videos: YouTubeVideo[]; evidence: ExtractListResult['evidence'] & { requestedLimit: number } }> {
+  const requestedLimit = normalizeLimit(options.limit);
+  const scanLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), 100);
   const result = await extractList(page, {
     root: youtubeSearchRoot,
-    limit: options.limit,
+    limit: scanLimit,
     required: ['href'],
     fields: {
       title: text('#video-title, a#video-title', { max: 200 }),
@@ -51,7 +53,13 @@ export async function youtubeSearchResults(page: ProbePage, options: YouTubeProb
       metadata: stringValue(row.metadata),
     });
   }
-  return { videos, evidence: result.evidence };
+  return {
+    videos: videos.slice(0, requestedLimit),
+    evidence: {
+      ...result.evidence,
+      requestedLimit,
+    },
+  };
 }
 
 export async function youtubeComments(page: ProbePage, options: YouTubeProbeOptions): Promise<{ comments: YouTubeComment[]; evidence: ExtractListResult['evidence'] }> {
@@ -106,6 +114,11 @@ function isYouTubeHost(hostname: string): boolean {
 
 function validVideoId(value: string | undefined): string | undefined {
   return value && youtubeVideoIdPattern.test(value) ? value : undefined;
+}
+
+function normalizeLimit(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.trunc(value));
 }
 
 function stringValue(value: unknown): string {
