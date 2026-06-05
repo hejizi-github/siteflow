@@ -208,7 +208,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         id: nextStepId(steps),
         type: 'click',
         target: event.target,
-        ...(isMutatingTarget(event.target) ? { mutating: true } : {}),
+        ...(event.mutating === true || isMutatingTarget(event.target) ? { mutating: true } : {}),
       };
       steps.push(step);
       continue;
@@ -300,6 +300,7 @@ export function recorderInjectionSource(): string {
   }
 
   const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv|e-?mail|phone|\\btel(?:ephone)?\\b)/i;
+  const MUTATING_TEXT = /\\b(submit|send|publish|save|post|upload)\\b/i;
 
   function elementFor(rawTarget) {
     return rawTarget && rawTarget.nodeType === Node.ELEMENT_NODE ? rawTarget : rawTarget?.parentElement;
@@ -335,6 +336,10 @@ export function recorderInjectionSource(): string {
     return typeof value === 'string' && SENSITIVE_FIELD.test(value);
   }
 
+  function hasMutatingMarker(value) {
+    return typeof value === 'string' && MUTATING_TEXT.test(value);
+  }
+
   function isSensitiveInputType(element) {
     if (!(element instanceof HTMLInputElement)) return false;
     const type = (element.getAttribute('type') || element.type || '').toLowerCase();
@@ -351,6 +356,15 @@ export function recorderInjectionSource(): string {
       || hasSensitiveMarker(labelFor(element))
       || hasSensitiveMarker(element.getAttribute('placeholder'));
   }
+  function hasMutatingIntent(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+    return hasMutatingMarker(actionInputTextFor(element))
+      || hasMutatingMarker(typeof element.value === 'string' ? element.value : undefined)
+      || hasMutatingMarker(element.getAttribute('aria-label'))
+      || hasMutatingMarker(labelFor(element))
+      || hasMutatingMarker(normalizedText(element.innerText || element.textContent || ''));
+  }
+
 
   function isTextLikeInput(element) {
     if (!(element instanceof HTMLInputElement)) return false;
@@ -455,7 +469,9 @@ export function recorderInjectionSource(): string {
   document.addEventListener('click', (event) => {
     flushPendingScroll();
     const info = controlInfoFor(event.target);
-    record(basePayload(info.unsupported || info.sensitive ? 'unsupported' : 'click', targetFor(info.element || event.target, info.control)));
+    const payload = basePayload(info.unsupported || info.sensitive ? 'unsupported' : 'click', targetFor(info.element || event.target, info.control));
+    if (payload.type === 'click' && hasMutatingIntent(info.element || event.target)) payload.mutating = true;
+    record(payload);
   }, true);
 
   function recordValueEvent(event) {

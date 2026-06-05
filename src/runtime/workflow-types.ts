@@ -129,6 +129,7 @@ export interface RecordedEvent {
   control?: 'input' | 'textarea' | 'select' | 'contenteditable';
   option?: string;
   sensitive?: boolean;
+  mutating?: boolean;
   url: string;
   title: string;
   networkLastId?: number;

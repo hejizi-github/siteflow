@@ -769,6 +769,28 @@ test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
     { id: 'step-2', type: 'click', target, mutating: true },
   ]);
 });
+
+test('normalizeRecordedEvents preserves mutating hint for stable selector clicks without semantics', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: {},
+    structural: { selector: '#submit', nth: 0 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, mutating: true, url: 'https://example.test/form', title: 'Form' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target, mutating: true },
+  ]);
+});
+
 test('input submit with stable selector records selector target without semantic submit text', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const input = fakeRecordedElement({
@@ -787,12 +809,13 @@ test('input submit with stable selector records selector target without semantic
   assert.equal(event.target.semantic.text, undefined);
   assert.equal(event.target.structural.selector, 'input[type="submit"]');
   assert.equal(event.target.structural.nth, 0);
+  assert.equal(event.mutating, true);
   assert.deepEqual(normalizeRecordedEvents({
     startUrl: 'https://example.test/form',
     events: [event],
   }), [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
-    { id: 'step-2', type: 'click', target: event.target },
+    { id: 'step-2', type: 'click', target: event.target, mutating: true },
   ]);
 });
 
