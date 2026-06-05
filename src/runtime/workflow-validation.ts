@@ -1,5 +1,5 @@
 import { SiteflowError } from '../shared/errors.js';
-import type { SiteflowWorkflow, WorkflowStep, WorkflowStepType } from './workflow-types.js';
+import type { RecordedTarget, SiteflowWorkflow, WorkflowStep, WorkflowStepType, WorkflowVariable } from './workflow-types.js';
 
 const PHASE_1_STEP_TYPES: Record<WorkflowStepType, true> = {
   open: true,
@@ -33,6 +33,39 @@ function requireObject(value: unknown, field: string): Record<string, unknown> {
   return value;
 }
 
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw workflowError('BAD_WORKFLOW', `${field} must be a boolean.`);
+  }
+  return value;
+}
+
+function validateVariable(value: unknown, index: number): WorkflowVariable {
+  const variable = requireObject(value, `variables[${index}]`);
+  const name = requireString(variable.name, `variables[${index}].name`);
+  const source = requireString(variable.source, `variables[${index}].source`);
+  if (source !== 'input' && source !== 'file' && source !== 'env') {
+    throw workflowError('BAD_WORKFLOW', `variables[${index}].source must be input, file, or env.`);
+  }
+
+  return {
+    name,
+    source,
+    sensitive: requireBoolean(variable.sensitive, `variables[${index}].sensitive`),
+    required: requireBoolean(variable.required, `variables[${index}].required`),
+  };
+}
+
+function validateTarget(value: unknown, field: string): RecordedTarget {
+  const target = requireObject(value, field);
+  const confidence = requireString(target.confidence, `${field}.confidence`);
+  if (confidence !== 'high' && confidence !== 'medium' && confidence !== 'low') {
+    throw workflowError('BAD_WORKFLOW', `${field}.confidence must be high, medium, or low.`);
+  }
+
+  return { ...target, confidence } as RecordedTarget;
+}
+
 function validateStep(value: unknown, index: number): WorkflowStep {
   if (!isRecord(value)) throw workflowError('BAD_WORKFLOW', `steps[${index}] must be an object.`);
 
@@ -46,7 +79,7 @@ function validateStep(value: unknown, index: number): WorkflowStep {
   if (type === 'open') requireString(value.url, `steps[${index}].url`);
 
   if (type === 'click' || type === 'type' || type === 'select') {
-    requireObject(value.target, `steps[${index}].target`);
+    validateTarget(value.target, `steps[${index}].target`);
   }
 
   if (type === 'type') requireString(value.value, `steps[${index}].value`);
@@ -70,6 +103,13 @@ export function validateWorkflow(value: unknown): SiteflowWorkflow {
   if (value.variables !== undefined && !Array.isArray(value.variables)) {
     throw workflowError('BAD_WORKFLOW', 'variables must be an array.');
   }
+  let name: string | undefined;
+  if (value.name !== undefined) {
+    if (typeof value.name !== 'string') {
+      throw workflowError('BAD_WORKFLOW', 'name must be a string.');
+    }
+    name = value.name;
+  }
   if (!Array.isArray(value.steps)) throw workflowError('BAD_WORKFLOW', 'steps must be an array.');
 
   const evidence = value.evidence === undefined ? {} : requireObject(value.evidence, 'evidence');
@@ -77,10 +117,10 @@ export function validateWorkflow(value: unknown): SiteflowWorkflow {
   return {
     version: 1,
     kind: 'siteflow.workflow',
-    ...(typeof value.name === 'string' ? { name: value.name } : {}),
+    ...(name === undefined ? {} : { name }),
     createdAt,
     startUrl,
-    variables: variables as SiteflowWorkflow['variables'],
+    variables: variables.map(validateVariable),
     steps: value.steps.map(validateStep),
     evidence,
   };
