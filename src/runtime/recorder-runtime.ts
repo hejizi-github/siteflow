@@ -288,6 +288,17 @@ export function recorderInjectionSource(): string {
     return undefined;
   }
 
+  function selectorNthFor(element, selector) {
+    if (!selector || typeof document.querySelectorAll !== 'function') return undefined;
+    try {
+      const matches = Array.from(document.querySelectorAll(selector));
+      const nth = matches.indexOf(element);
+      return nth >= 0 && Number.isFinite(nth) ? nth : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv|e-?mail|phone|\\btel(?:ephone)?\\b)/i;
 
   function elementFor(rawTarget) {
@@ -385,7 +396,24 @@ export function recorderInjectionSource(): string {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     const rect = element.getBoundingClientRect();
     const selector = selectorFor(element);
-    const selectedOptionText = control === 'select' && !selector ? selectedOptionTextFor(element) : undefined;
+    const nth = selectorNthFor(element, selector);
+    if (selector) {
+      return {
+        semantic: {},
+        structural: {
+          selector,
+          ...(nth !== undefined ? { nth } : {}),
+        },
+        geometry: {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+          width: rect.width,
+          height: rect.height,
+        },
+        confidence: 'high',
+      };
+    }
+    const selectedOptionText = control === 'select' ? selectedOptionTextFor(element) : undefined;
     const text = control ? selectedOptionText : actionInputTextFor(element) || normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
@@ -395,9 +423,7 @@ export function recorderInjectionSource(): string {
         ...(label ? { label } : {}),
         ...(text ? { text } : {}),
       },
-      structural: {
-        ...(selector ? { selector } : {}),
-      },
+      structural: {},
       geometry: {
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2,

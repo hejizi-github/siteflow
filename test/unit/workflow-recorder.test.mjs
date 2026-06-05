@@ -43,6 +43,7 @@ async function recordFixturePayloads(element, type, eventOverrides = {}) {
   };
   const document = {
     title: 'Form',
+    querySelectorAll: eventOverrides.querySelectorAll || (() => []),
     addEventListener: (eventType, handler) => {
       listeners[eventType] = handler;
     },
@@ -768,8 +769,7 @@ test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
     { id: 'step-2', type: 'click', target, mutating: true },
   ]);
 });
-
-test('input submit value is recorded as mutating click evidence', async () => {
+test('input submit with stable selector records selector target without semantic submit text', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const input = fakeRecordedElement({
     localName: 'input',
@@ -780,15 +780,19 @@ test('input submit value is recorded as mutating click evidence', async () => {
   });
   Object.setPrototypeOf(input, FakeInputElement.prototype);
 
-  const event = await recordFixtureEvent(input, 'click');
+  const event = await recordFixtureEvent(input, 'click', {
+    querySelectorAll: (selector) => (selector === 'input[type="submit"]' ? [input] : []),
+  });
 
-  assert.equal(event.target.semantic.text, 'save changes');
+  assert.equal(event.target.semantic.text, undefined);
+  assert.equal(event.target.structural.selector, 'input[type="submit"]');
+  assert.equal(event.target.structural.nth, 0);
   assert.deepEqual(normalizeRecordedEvents({
     startUrl: 'https://example.test/form',
     events: [event],
   }), [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
-    { id: 'step-2', type: 'click', target: event.target, mutating: true },
+    { id: 'step-2', type: 'click', target: event.target },
   ]);
 });
 
@@ -822,7 +826,38 @@ test('normalizeRecordedEvents converts select change events to select steps', as
   ]);
 });
 
-test('recorded targets omit Phase 1 unsupported semantic fields', async () => {
+test('recorded selector target includes matching nth and normalizes preserving nth', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const first = fakeRecordedElement({
+    localName: 'button',
+    tagName: 'BUTTON',
+    getAttribute: (name) => (name === 'type' ? 'button' : undefined),
+  });
+  const second = fakeRecordedElement({
+    localName: 'button',
+    tagName: 'BUTTON',
+    innerText: 'Second duplicate',
+    textContent: 'Second duplicate',
+    getAttribute: (name) => (name === 'type' ? 'button' : undefined),
+  });
+
+  const event = await recordFixtureEvent(second, 'click', {
+    querySelectorAll: (selector) => (selector === 'button[type="button"]' ? [first, second] : []),
+  });
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.target.structural.selector, 'button[type="button"]');
+  assert.equal(event.target.structural.nth, 1);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target: event.target },
+  ]);
+});
+
+test('recorded selector target omits semantic fields that override replay selector', async () => {
   const button = fakeRecordedElement({
     id: 'submit',
     innerText: 'Submit',
@@ -835,13 +870,13 @@ test('recorded targets omit Phase 1 unsupported semantic fields', async () => {
     },
   });
 
-  const event = await recordFixtureEvent(button, 'click');
+  const event = await recordFixtureEvent(button, 'click', {
+    querySelectorAll: (selector) => (selector === '#submit' ? [button] : []),
+  });
 
-  assert.equal(event.target.semantic.aria, 'Submit form');
-  assert.equal(event.target.semantic.text, 'Submit');
-  assert.equal(event.target.semantic.role, undefined);
-  assert.equal(event.target.semantic.placeholder, undefined);
+  assert.equal(Object.keys(event.target.semantic).length, 0);
   assert.equal(event.target.structural.selector, '#submit');
+  assert.equal(event.target.structural.nth, 0);
 });
 
 test('startRecorderSession reuses page binding and routes events to active session', async () => {
