@@ -302,3 +302,24 @@ test('validateWorkflow preserves valid optional step fields', async () => {
 
   assert.deepEqual(workflow.steps, steps);
 });
+
+test('exportWorkflowCli preserves variables and labels mutating steps', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli({
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'type', target: { semantic: { label: 'Email' }, confidence: 'high' }, value: '${LOGIN_EMAIL}' },
+      { id: 'step-3', type: 'click', target: { semantic: { text: 'Submit' }, confidence: 'high' }, mutating: true },
+    ],
+    evidence: {},
+  });
+
+  assert.match(script, /siteflow --json browser open 'https:\/\/example.com\/'/);
+  assert.match(script, /--value '\$\{LOGIN_EMAIL\}'/);
+  assert.match(script, /MUTATING step-3/);
+});
