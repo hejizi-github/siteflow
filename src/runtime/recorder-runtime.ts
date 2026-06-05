@@ -69,6 +69,14 @@ function hasReplayableContentEditableTarget(target: RecordedTarget): boolean {
   return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label);
 }
 
+function hasReplayableTextTarget(target: RecordedTarget): boolean {
+  return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label);
+}
+
+function hasSameStructuralSelector(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
+  return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
+}
+
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -105,6 +113,10 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           continue;
         }
         const key = targetKey(event.target);
+        const previousStep = steps[steps.length - 1];
+        if (previousStep?.type === 'click' && hasSameStructuralSelector(previousStep.target, event.target)) {
+          steps.pop();
+        }
         const option = event.option ?? event.value ?? '';
         if (lastSelectStep && lastSelectTargetKey === key) {
           lastSelectStep.option = option;
@@ -125,6 +137,14 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       }
 
       if (event.control === 'contenteditable' && !hasReplayableContentEditableTarget(event.target)) {
+        unsupportedEvents += 1;
+        lastInputTargetKey = undefined;
+        lastInputStep = undefined;
+        lastSelectTargetKey = undefined;
+        lastSelectStep = undefined;
+        continue;
+      }
+      if (event.control !== 'contenteditable' && !hasReplayableTextTarget(event.target)) {
         unsupportedEvents += 1;
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
@@ -235,7 +255,7 @@ export function recorderInjectionSource(): string {
     const name = element.getAttribute('name');
     if (name) return tag + '[name="' + cssEscape(name) + '"]';
     const type = element.getAttribute('type');
-    if (type) return tag + '[type="' + cssEscape(type) + '"]';
+    if (type && !isTextLikeInput(element)) return tag + '[type="' + cssEscape(type) + '"]';
     return undefined;
   }
 

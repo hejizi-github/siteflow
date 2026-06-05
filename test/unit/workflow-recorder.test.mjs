@@ -967,6 +967,68 @@ test('recorded select with stable selector omits semantic selected option text',
   ]);
 });
 
+test('recorded anonymous text input without stable semantics is skipped', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'text',
+    value: 'anonymous',
+    getAttribute: (name) => (name === 'type' ? 'text' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(input, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'input');
+  assert.equal(event.value, 'anonymous');
+  assert.equal(event.target.semantic.aria, undefined);
+  assert.equal(event.target.semantic.label, undefined);
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('normalizeRecordedEvents removes preceding select click when select change records same target', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const clickTarget = {
+    semantic: { text: 'United States Canada' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+  const selectTarget = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: clickTarget, url: 'https://example.test/form', title: 'Form' },
+      {
+        ts: '2026-06-05T00:00:02.000Z',
+        type: 'change',
+        control: 'select',
+        target: selectTarget,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: selectTarget, option: 'Canada' },
+  ]);
+});
+
 test('recorded checkbox radio and file input changes are skipped', async () => {
   for (const type of ['checkbox', 'radio', 'file']) {
     const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
