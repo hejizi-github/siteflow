@@ -26,6 +26,8 @@ dist/
 receipts/
 traces/
 trace/
+!src/traces/
+!src/traces/**/*.ts
 *.trace
 *.har
 *.cookies.json
