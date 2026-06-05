@@ -429,7 +429,7 @@ export function recorderInjectionSource(): string {
   document.addEventListener('click', (event) => {
     flushPendingScroll();
     const info = controlInfoFor(event.target);
-    record(basePayload(info.unsupported || info.sensitive ? 'unsupported' : 'click', targetFor(info.element || event.target)));
+    record(basePayload(info.unsupported || info.sensitive ? 'unsupported' : 'click', targetFor(info.element || event.target, info.control)));
   }, true);
 
   function recordValueEvent(event) {

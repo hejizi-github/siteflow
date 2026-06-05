@@ -168,10 +168,10 @@ function validateStep(value: unknown, index: number): WorkflowStep {
 
   if (type === 'type') {
     const pressEnter = optionalBoolean(value.pressEnter, `steps[${index}].pressEnter`);
-    if (typeof value.value !== 'string' || (value.value.length === 0 && pressEnter !== true)) {
-      throw workflowError('BAD_WORKFLOW', `steps[${index}].value must be a non-empty string unless pressEnter is true.`);
+    const clear = optionalBoolean(value.clear, `steps[${index}].clear`);
+    if (typeof value.value !== 'string' || (value.value.length === 0 && (pressEnter !== true || clear !== false))) {
+      throw workflowError('BAD_WORKFLOW', `steps[${index}].value must be a non-empty string unless pressEnter is true and clear is false.`);
     }
-    optionalBoolean(value.clear, `steps[${index}].clear`);
   }
 
   if (type === 'select') requireString(value.option, `steps[${index}].option`);

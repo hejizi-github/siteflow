@@ -326,6 +326,18 @@ test('validateWorkflow accepts recorded Enter key type steps with empty value', 
   assert.deepEqual(workflow.steps, [step]);
 });
 
+test('validateWorkflow rejects empty Enter type steps unless clear is false', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target, value: '', pressEnter: true }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
 test('validateWorkflow rejects malformed scroll deltas', async () => {
   const { validateWorkflow } = await validation();
   const stepCases = [
@@ -988,6 +1000,37 @@ test('recorded select with stable selector omits semantic selected option text',
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
   ]);
+});
+
+test('recorded select click with stable selector omits stale option text', async () => {
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    innerText: 'United States Canada',
+    textContent: 'United States Canada',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'click');
+
+  assert.equal(event.target.structural.selector, 'select[name="country"]');
+  assert.equal(event.target.semantic.text, undefined);
+});
+
+test('recorded contenteditable click with stable selector omits editable body text', async () => {
+  const editor = fakeRecordedElement({
+    id: 'editor',
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: 'Draft comment',
+  });
+
+  const event = await recordFixtureEvent(editor, 'click');
+
+  assert.equal(event.target.structural.selector, '#editor');
+  assert.equal(event.target.semantic.text, undefined);
 });
 
 test('recorded anonymous text input without stable semantics is skipped', async () => {
