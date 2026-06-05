@@ -27,7 +27,7 @@ function fakeRecordedElement(overrides = {}) {
   };
 }
 
-async function recordFixturePayloads(element, type) {
+async function recordFixturePayloads(element, type, eventOverrides = {}) {
   const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
   const payloads = [];
   const listeners = {};
@@ -57,12 +57,12 @@ async function recordFixturePayloads(element, type) {
   });
 
   runInContext(recorderInjectionSource(), context);
-  listeners[type]({ type, target: element });
+  listeners[type]({ type, target: element, ...eventOverrides });
   return payloads;
 }
 
-async function recordFixtureEvent(element, type) {
-  const payloads = await recordFixturePayloads(element, type);
+async function recordFixtureEvent(element, type, eventOverrides = {}) {
+  const payloads = await recordFixturePayloads(element, type, eventOverrides);
   assert.equal(payloads.length, 1);
   return payloads[0];
 }
@@ -1029,7 +1029,54 @@ test('normalizeRecordedEvents removes preceding select click when select change 
   ]);
 });
 
-test('recorded checkbox radio and file input changes are skipped', async () => {
+test('unsupported selector-less select click and change removes click and counts unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-select-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const clickTarget = {
+      semantic: { text: 'United States Canada' },
+      geometry: { x: 50, y: 20, width: 100, height: 40 },
+      confidence: 'high',
+    };
+    const selectTarget = {
+      semantic: { text: 'Canada' },
+      geometry: { x: 50, y: 20, width: 100, height: 40 },
+      confidence: 'high',
+    };
+
+    const result = await stopRecorderSession({
+      id: 'session-select-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: clickTarget, url: 'https://example.test/form', title: 'Form' },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'change',
+          control: 'select',
+          target: selectTarget,
+          value: 'CA',
+          option: 'Canada',
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('recorded checkbox radio and file input changes become unsupported events', async () => {
   for (const type of ['checkbox', 'radio', 'file']) {
     const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
       localName: 'input',
@@ -1043,7 +1090,37 @@ test('recorded checkbox radio and file input changes are skipped', async () => {
       },
     }));
 
-    assert.deepEqual(await recordFixturePayloads(input, 'change'), []);
+    const payloads = await recordFixturePayloads(input, 'change');
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+  }
+});
+
+test('unsupported checkbox radio and file events count unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-unsupported-controls-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-unsupported-controls',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="checkbox"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="radio"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:03.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="file"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 3);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
   }
 });
 
@@ -1121,6 +1198,43 @@ test('stopRecorderSession skips sensitive input and change events and counts the
     ]);
     assert.equal(written.includes('super-secret-token'), false);
     assert.equal(written.includes('another-secret'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('geometry-only Enter keydown is unsupported and not normalized to type', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-enter-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      geometry: { x: 10, y: 20, width: 100, height: 30 },
+      confidence: 'low',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-enter-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Enter',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

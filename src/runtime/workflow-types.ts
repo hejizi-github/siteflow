@@ -123,7 +123,7 @@ export interface SiteflowWorkflow {
 
 export interface RecordedEvent {
   ts: string;
-  type: 'click' | 'input' | 'change' | 'scroll' | 'keydown';
+  type: 'click' | 'input' | 'change' | 'scroll' | 'keydown' | 'unsupported';
   target?: RecordedTarget;
   value?: string;
   control?: 'input' | 'textarea' | 'select' | 'contenteditable';

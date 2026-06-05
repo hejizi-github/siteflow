@@ -69,8 +69,21 @@ function hasReplayableContentEditableTarget(target: RecordedTarget): boolean {
   return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label);
 }
 
-function hasReplayableTextTarget(target: RecordedTarget): boolean {
-  return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label);
+function hasReplayableTypeTarget(target: RecordedTarget): boolean {
+  return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label || target.semantic?.text);
+}
+
+function hasSameGeometry(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
+  return left?.geometry !== undefined
+    && right.geometry !== undefined
+    && left.geometry.x === right.geometry.x
+    && left.geometry.y === right.geometry.y
+    && left.geometry.width === right.geometry.width
+    && left.geometry.height === right.geometry.height;
+}
+
+function hasSameSelectTarget(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
+  return hasSameStructuralSelector(left, right) || (!left?.structural?.selector && !right.structural?.selector && hasSameGeometry(left, right));
 }
 
 function hasSameStructuralSelector(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
@@ -104,7 +117,11 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       }
 
       if (event.control === 'select') {
+        const previousSelectClickStep = steps[steps.length - 1];
         if (!event.target.structural?.selector) {
+          if (previousSelectClickStep?.type === 'click' && hasSameSelectTarget(previousSelectClickStep.target, event.target)) {
+            steps.pop();
+          }
           unsupportedEvents += 1;
           lastInputTargetKey = undefined;
           lastInputStep = undefined;
@@ -113,8 +130,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           continue;
         }
         const key = targetKey(event.target);
-        const previousStep = steps[steps.length - 1];
-        if (previousStep?.type === 'click' && hasSameStructuralSelector(previousStep.target, event.target)) {
+        if (previousSelectClickStep?.type === 'click' && hasSameSelectTarget(previousSelectClickStep.target, event.target)) {
           steps.pop();
         }
         const option = event.option ?? event.value ?? '';
@@ -144,7 +160,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         lastSelectStep = undefined;
         continue;
       }
-      if (event.control !== 'contenteditable' && !hasReplayableTextTarget(event.target)) {
+      if (event.control !== 'contenteditable' && !hasReplayableTypeTarget(event.target)) {
         unsupportedEvents += 1;
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
@@ -204,6 +220,11 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       continue;
     }
 
+    if (event.type === 'unsupported') {
+      unsupportedEvents += 1;
+      continue;
+    }
+
     if (event.type === 'keydown') {
       if (isSensitiveRecordedEvent(event)) {
         unsupportedEvents += 1;
@@ -212,7 +233,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       if (event.key === 'Enter' && (event.control === 'textarea' || event.control === 'contenteditable')) {
         continue;
       }
-      if (event.key === 'Enter' && event.target) {
+      if (event.key === 'Enter' && event.target && hasReplayableTypeTarget(event.target)) {
         steps.push({
           id: nextStepId(steps),
           type: 'type',
@@ -221,7 +242,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           clear: false,
           pressEnter: true,
         });
-      } else {
+      } else if (event.key === 'Enter') {
         unsupportedEvents += 1;
       }
     }
@@ -387,7 +408,10 @@ export function recorderInjectionSource(): string {
 
   function recordValueEvent(event) {
     const info = controlInfoFor(event.target);
-    if (info.unsupported) return;
+    if (info.unsupported) {
+      record(basePayload('unsupported', targetFor(info.element || event.target)));
+      return;
+    }
     const target = targetFor(info.element || event.target, info.control);
     const value = info.control === 'contenteditable' && info.element
       ? contenteditableValueFor(info.element)
@@ -407,6 +431,10 @@ export function recorderInjectionSource(): string {
   document.addEventListener('keydown', (event) => {
     if (!CONTROL_KEYS.has(event.key)) return;
     const info = controlInfoFor(event.target);
+    if (info.unsupported) {
+      record(basePayload('unsupported', targetFor(info.element || event.target)));
+      return;
+    }
     if (event.key === 'Enter' && (info.control === 'textarea' || info.control === 'contenteditable')) return;
     record({
       ...basePayload('keydown', targetFor(info.element || event.target, info.control)),
@@ -437,7 +465,7 @@ export function recorderInjectionSource(): string {
 function isRecordedEvent(value: unknown): value is RecordedEvent {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const event = value as Partial<RecordedEvent>;
-  return (event.type === 'click' || event.type === 'input' || event.type === 'change' || event.type === 'scroll' || event.type === 'keydown')
+  return (event.type === 'click' || event.type === 'input' || event.type === 'change' || event.type === 'scroll' || event.type === 'keydown' || event.type === 'unsupported')
     && typeof event.ts === 'string'
     && typeof event.url === 'string'
     && typeof event.title === 'string';
