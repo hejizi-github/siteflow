@@ -165,6 +165,9 @@ function validateStep(value: unknown, index: number): WorkflowStep {
 
 export function validateWorkflow(value: unknown): SiteflowWorkflow {
   if (!isRecord(value)) throw workflowError('BAD_WORKFLOW', 'Workflow must be an object.');
+  if (typeof value.version !== 'number' || !Number.isFinite(value.version)) {
+    throw workflowError('BAD_WORKFLOW', 'version must be a finite number.');
+  }
   if (value.version !== 1) {
     throw workflowError('WORKFLOW_UNSUPPORTED_VERSION', 'Only workflow version 1 is supported.');
   }

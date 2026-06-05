@@ -18,16 +18,22 @@ function validWorkflow(overrides = {}) {
 
 test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
   const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
   const workflow = validateWorkflow(validWorkflow({
     steps: [
       { id: 'step-1', type: 'open', url: 'https://example.com/' },
-      { id: 'step-2', type: 'click', target: { semantic: { text: 'Continue' }, confidence: 'high' } },
+      { id: 'step-2', type: 'click', target },
+      { id: 'step-3', type: 'type', target, value: 'hello' },
+      { id: 'step-4', type: 'select', target, option: 'A' },
+      { id: 'step-5', type: 'scroll' },
+      { id: 'step-6', type: 'wait' },
+      { id: 'step-7', type: 'screenshot' },
     ],
     evidence: { pages: 1, events: 2 },
   }));
 
   assert.equal(workflow.kind, 'siteflow.workflow');
-  assert.equal(workflow.steps.length, 2);
+  assert.deepEqual(workflow.steps.map((step) => step.type), ['open', 'click', 'type', 'select', 'scroll', 'wait', 'screenshot']);
 });
 
 test('validateWorkflow preserves optional workflow fields and defaults variables/evidence', async () => {
@@ -45,6 +51,33 @@ test('validateWorkflow preserves optional workflow fields and defaults variables
   assert.deepEqual(workflow.variables, []);
   assert.deepEqual(workflow.steps, [{ id: 'step-1', type: 'open', url: 'https://example.com/' }]);
   assert.deepEqual(workflow.evidence, {});
+});
+
+test('validateWorkflow rejects malformed top-level workflow fields', async () => {
+  const { validateWorkflow } = await validation();
+  for (const workflow of [
+    null,
+    [],
+    'workflow',
+    validWorkflow({ kind: 'siteflow.recording' }),
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.kind;
+      return workflow;
+    })(),
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.steps;
+      return workflow;
+    })(),
+    validWorkflow({ steps: {} }),
+    validWorkflow({ evidence: 'bad' }),
+  ]) {
+    assert.throws(
+      () => validateWorkflow(workflow),
+      /BAD_WORKFLOW/,
+    );
+  }
 });
 
 test('validateWorkflow preserves variables, steps, and evidence when supplied', async () => {
@@ -88,10 +121,25 @@ test('validateWorkflow preserves variables, steps, and evidence when supplied', 
   assert.deepEqual(workflow.evidence, { pages: 1, events: 2 });
 });
 
-test('validateWorkflow rejects unsupported workflow versions', async () => {
+test('validateWorkflow classifies malformed and unsupported workflow versions', async () => {
   const { validateWorkflow } = await validation();
+  for (const workflow of [
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.version;
+      return workflow;
+    })(),
+    validWorkflow({ version: '1' }),
+    validWorkflow({ version: Number.NaN }),
+  ]) {
+    assert.throws(
+      () => validateWorkflow(workflow),
+      /BAD_WORKFLOW/,
+    );
+  }
+
   assert.throws(
-    () => validateWorkflow({ version: 2, kind: 'siteflow.workflow', steps: [] }),
+    () => validateWorkflow(validWorkflow({ version: 2 })),
     /WORKFLOW_UNSUPPORTED_VERSION/,
   );
 });
@@ -131,8 +179,11 @@ test('validateWorkflow rejects malformed workflow variables', async () => {
 test('validateWorkflow rejects malformed required step targets', async () => {
   const { validateWorkflow } = await validation();
   for (const step of [
+    { id: 'step-1', type: 'click' },
     { id: 'step-1', type: 'click', target: {} },
+    { id: 'step-1', type: 'type', value: 'hello' },
     { id: 'step-1', type: 'type', target: {}, value: 'hello' },
+    { id: 'step-1', type: 'select', option: 'A' },
     { id: 'step-1', type: 'select', target: {}, option: 'A' },
   ]) {
     assert.throws(
