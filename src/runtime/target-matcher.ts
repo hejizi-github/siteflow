@@ -14,6 +14,11 @@ function hasValue(value: string | undefined): value is string {
   return value !== undefined && value.length > 0;
 }
 
+function attachNth(target: BrowserElementTarget, nth: number | undefined): BrowserElementTarget {
+  if (nth !== undefined) target.nth = nth;
+  return target;
+}
+
 
 export function matchedByForRecordedTarget(target: RecordedTarget): RecordedTargetMatch {
   const semantic = target.semantic;
@@ -28,11 +33,12 @@ export function matchedByForRecordedTarget(target: RecordedTarget): RecordedTarg
 
 export function browserTargetFromRecordedTarget(target: RecordedTarget): BrowserElementTarget {
   const semantic = target.semantic;
-  if (hasValue(semantic?.aria)) return { aria: semantic.aria, exact: true };
-  if (hasValue(semantic?.label)) return { aria: semantic.label, exact: true };
-  if (hasValue(semantic?.placeholder)) return { selector: `[placeholder="${semantic.placeholder.replace(/[\\"]/g, (char) => `\\${char}`)}"]`, exact: true };
-  if (hasValue(semantic?.text)) return { text: semantic.text, exact: true };
-  if (hasValue(target.structural?.selector)) return { selector: target.structural.selector, exact: true };
+  const nth = target.structural?.nth;
+  if (hasValue(semantic?.aria)) return attachNth({ aria: semantic.aria, exact: true }, nth);
+  if (hasValue(semantic?.label)) return attachNth({ aria: semantic.label, exact: true }, nth);
+  if (hasValue(semantic?.placeholder)) return attachNth({ selector: `[placeholder="${semantic.placeholder.replace(/[\\"]/g, (char) => `\\${char}`)}"]`, exact: true }, nth);
+  if (hasValue(semantic?.text)) return attachNth({ text: semantic.text, exact: true }, nth);
+  if (hasValue(target.structural?.selector)) return attachNth({ selector: target.structural.selector, exact: true }, nth);
   return { exact: true };
 }
 
