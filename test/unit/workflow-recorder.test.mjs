@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const validation = () => import('../../dist/runtime/workflow-validation.js');
 
@@ -690,4 +693,152 @@ test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     { id: 'step-2', type: 'click', target, mutating: true },
   ]);
+});
+
+test('normalizeRecordedEvents converts select change events to select steps', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target, option: 'Canada' },
+  ]);
+});
+
+test('stopRecorderSession skips sensitive input and change events and counts them unsupported', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-sensitive-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'API key' },
+      structural: { selector: 'input[name="api_key"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-sensitive',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/settings',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'input',
+          control: 'input',
+          value: 'super-secret-token',
+          target,
+          url: 'https://example.test/settings',
+          title: 'Settings',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'change',
+          control: 'input',
+          value: 'another-secret',
+          target,
+          url: 'https://example.test/settings',
+          title: 'Settings',
+        },
+      ],
+    });
+
+    const written = await readFile(out, 'utf8');
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/settings' },
+    ]);
+    assert.equal(written.includes('super-secret-token'), false);
+    assert.equal(written.includes('another-secret'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecordedEvents ignores Enter keydown for multiline controls', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const textareaTarget = {
+    semantic: { label: 'Message' },
+    structural: { selector: 'textarea[name="message"]' },
+    confidence: 'high',
+  };
+  const editorTarget = {
+    semantic: { aria: 'Comment editor' },
+    structural: { selector: '#editor' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/comment',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'keydown',
+        control: 'textarea',
+        key: 'Enter',
+        target: textareaTarget,
+        url: 'https://example.test/comment',
+        title: 'Comment',
+      },
+      {
+        ts: '2026-06-05T00:00:02.000Z',
+        type: 'keydown',
+        control: 'contenteditable',
+        key: 'Enter',
+        target: editorTarget,
+        url: 'https://example.test/comment',
+        title: 'Comment',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/comment' },
+  ]);
+});
+
+test('stopRecorderSession writes workflow JSON to nested output directories', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-out-'));
+  try {
+    const out = path.join(temp, 'nested', 'recordings', 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-nested',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test',
+      events: [],
+    });
+
+    const written = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(result.out, out);
+    assert.equal(result.steps, 1);
+    assert.equal(written.kind, 'siteflow.workflow');
+    assert.deepEqual(written.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });

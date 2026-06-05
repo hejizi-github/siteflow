@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { Page } from 'playwright';
 import type {
   RecordedEvent,
@@ -21,6 +22,23 @@ export interface RecorderSession {
 }
 
 const MUTATING_TEXT = /\b(submit|send|publish|save|post|upload)\b/i;
+const SENSITIVE_FIELD = /(?:password|token|secret|api[\s_-]*key|\bkey\b|otp|one[\s_-]*time[\s_-]*code|card|cvv)/i;
+
+function hasSensitiveMarker(value: string | undefined): boolean {
+  return typeof value === 'string' && SENSITIVE_FIELD.test(value);
+}
+
+function isSensitiveRecordedEvent(event: RecordedEvent): boolean {
+  if (event.sensitive === true) return true;
+  if (!event.target) return false;
+  const semantic = event.target.semantic;
+  const structural = event.target.structural;
+  return hasSensitiveMarker(semantic?.aria)
+    || hasSensitiveMarker(semantic?.label)
+    || hasSensitiveMarker(semantic?.placeholder)
+    || hasSensitiveMarker(semantic?.text)
+    || hasSensitiveMarker(structural?.selector);
+}
 const stoppedSessions = new WeakSet<RecorderSession>();
 
 function nextStepId(steps: WorkflowStep[]): string {
@@ -55,17 +73,41 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
   let unsupportedEvents = 0;
   let lastInputTargetKey: string | undefined;
   let lastInputStep: Extract<WorkflowStep, { type: 'type' }> | undefined;
+  let lastSelectTargetKey: string | undefined;
+  let lastSelectStep: Extract<WorkflowStep, { type: 'select' }> | undefined;
 
   for (const event of input.events) {
     if (event.type === 'input' || event.type === 'change') {
-      if (!event.target) {
+      if (!event.target || isSensitiveRecordedEvent(event)) {
         unsupportedEvents += 1;
+        lastInputTargetKey = undefined;
+        lastInputStep = undefined;
+        lastSelectTargetKey = undefined;
+        lastSelectStep = undefined;
+        continue;
+      }
+
+      const key = targetKey(event.target);
+      if (event.control === 'select') {
+        const option = event.option ?? event.value ?? '';
+        if (lastSelectStep && lastSelectTargetKey === key) {
+          lastSelectStep.option = option;
+        } else {
+          const step: Extract<WorkflowStep, { type: 'select' }> = {
+            id: nextStepId(steps),
+            type: 'select',
+            target: event.target,
+            option,
+          };
+          steps.push(step);
+          lastSelectStep = step;
+          lastSelectTargetKey = key;
+        }
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
         continue;
       }
 
-      const key = targetKey(event.target);
       const value = event.value ?? '';
       if (lastInputStep && lastInputTargetKey === key) {
         lastInputStep.value = value;
@@ -81,11 +123,15 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         lastInputStep = step;
         lastInputTargetKey = key;
       }
+      lastSelectTargetKey = undefined;
+      lastSelectStep = undefined;
       continue;
     }
 
     lastInputTargetKey = undefined;
     lastInputStep = undefined;
+    lastSelectTargetKey = undefined;
+    lastSelectStep = undefined;
 
     if (event.type === 'click') {
       if (!event.target) {
@@ -113,6 +159,13 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
     }
 
     if (event.type === 'keydown') {
+      if (isSensitiveRecordedEvent(event)) {
+        unsupportedEvents += 1;
+        continue;
+      }
+      if (event.key === 'Enter' && (event.control === 'textarea' || event.control === 'contenteditable')) {
+        continue;
+      }
       if (event.key === 'Enter' && event.target) {
         steps.push({
           id: nextStepId(steps),
@@ -160,13 +213,59 @@ export function recorderInjectionSource(): string {
     return tag;
   }
 
-  function targetFor(rawTarget) {
-    const element = rawTarget && rawTarget.nodeType === Node.ELEMENT_NODE ? rawTarget : rawTarget?.parentElement;
+  const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv)/i;
+
+  function elementFor(rawTarget) {
+    return rawTarget && rawTarget.nodeType === Node.ELEMENT_NODE ? rawTarget : rawTarget?.parentElement;
+  }
+
+  function labelFor(element) {
+    return element.labels && element.labels.length > 0 ? Array.from(element.labels).map((item) => item.innerText || item.textContent || '').join(' ').trim().replace(/\\s+/g, ' ').slice(0, 120) || undefined : undefined;
+  }
+
+  function hasSensitiveMarker(value) {
+    return typeof value === 'string' && SENSITIVE_FIELD.test(value);
+  }
+
+  function isSensitiveControl(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+    if (element instanceof HTMLInputElement && element.type === 'password') return true;
+    return hasSensitiveMarker(element.getAttribute('name'))
+      || hasSensitiveMarker(element.id)
+      || hasSensitiveMarker(element.getAttribute('autocomplete'))
+      || hasSensitiveMarker(element.getAttribute('aria-label'))
+      || hasSensitiveMarker(labelFor(element))
+      || hasSensitiveMarker(element.getAttribute('placeholder'));
+  }
+
+  function editableAncestorFor(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
+    if (element.isContentEditable) return element;
+    const editable = element.closest('[contenteditable]');
+    return editable && editable.getAttribute('contenteditable') !== 'false' ? editable : undefined;
+  }
+
+  function controlInfoFor(rawTarget) {
+    const element = elementFor(rawTarget);
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return {};
+    if (element instanceof HTMLSelectElement) {
+      const option = element.selectedOptions.length > 0 ? (element.selectedOptions[0].innerText || element.selectedOptions[0].textContent || '').trim().replace(/\\s+/g, ' ') : undefined;
+      return { element, control: 'select', option, sensitive: isSensitiveControl(element) };
+    }
+    if (element instanceof HTMLTextAreaElement) return { element, control: 'textarea', sensitive: isSensitiveControl(element) };
+    if (element instanceof HTMLInputElement) return { element, control: 'input', sensitive: isSensitiveControl(element) };
+    const editable = editableAncestorFor(element);
+    if (editable) return { element: editable, control: 'contenteditable', sensitive: isSensitiveControl(editable) };
+    return { element, sensitive: isSensitiveControl(element) };
+  }
+
+  function targetFor(rawTarget, control) {
+    const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     const rect = element.getBoundingClientRect();
-    const text = (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120) || undefined;
+    const text = control ? undefined : (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
-    const label = element.labels && element.labels.length > 0 ? Array.from(element.labels).map((item) => item.innerText || item.textContent || '').join(' ').trim().replace(/\s+/g, ' ').slice(0, 120) || undefined : undefined;
+    const label = labelFor(element);
     const placeholder = element.getAttribute('placeholder') || undefined;
     const role = element.getAttribute('role') || undefined;
     return {
@@ -212,9 +311,15 @@ export function recorderInjectionSource(): string {
   }, true);
 
   function recordValueEvent(event) {
-    const target = targetFor(event.target);
-    const value = typeof event.target?.value === 'string' ? event.target.value : '';
-    record({ ...basePayload(event.type, target), value });
+    const info = controlInfoFor(event.target);
+    const target = targetFor(info.element || event.target, info.control);
+    const payload = {
+      ...basePayload(event.type, target),
+      ...(info.control ? { control: info.control } : {}),
+      ...(info.option ? { option: info.option } : {}),
+      ...(info.sensitive ? { sensitive: true } : { value: typeof info.element?.value === 'string' ? info.element.value : '' }),
+    };
+    record(payload);
   }
 
   document.addEventListener('input', recordValueEvent, true);
@@ -222,7 +327,14 @@ export function recorderInjectionSource(): string {
 
   document.addEventListener('keydown', (event) => {
     if (!CONTROL_KEYS.has(event.key)) return;
-    record({ ...basePayload('keydown', targetFor(event.target)), key: event.key });
+    const info = controlInfoFor(event.target);
+    if (event.key === 'Enter' && (info.control === 'textarea' || info.control === 'contenteditable')) return;
+    record({
+      ...basePayload('keydown', targetFor(info.element || event.target, info.control)),
+      key: event.key,
+      ...(info.control ? { control: info.control } : {}),
+      ...(info.sensitive ? { sensitive: true } : {}),
+    });
   }, true);
 
   window.addEventListener('scroll', () => {
@@ -301,6 +413,8 @@ export async function stopRecorderSession(session: RecorderSession): Promise<Rec
     steps: normalized.steps,
     evidence: {},
   };
+
+  await mkdir(dirname(session.out), { recursive: true });
 
   await writeFile(session.out, `${JSON.stringify(workflow, null, 2)}\n`, 'utf8');
 

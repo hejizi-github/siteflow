@@ -126,6 +126,9 @@ export interface RecordedEvent {
   type: 'click' | 'input' | 'change' | 'scroll' | 'keydown';
   target?: RecordedTarget;
   value?: string;
+  control?: 'input' | 'textarea' | 'select' | 'contenteditable';
+  option?: string;
+  sensitive?: boolean;
   url: string;
   title: string;
   networkLastId?: number;
