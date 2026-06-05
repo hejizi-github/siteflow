@@ -3,7 +3,7 @@ import { extractList, href, text, type ExtractListResult, type ProbePage } from 
 
 const youtubeSearchRoot = 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title';
 const youtubeCommentsRoot = 'ytd-comment-thread-renderer';
-const youtubeVideoIdPattern = /^[\w-]{6,}$/;
+const youtubeVideoIdPattern = /^[A-Za-z0-9_-]{11}$/;
 
 export interface YouTubeProbeOptions {
   limit: number;
@@ -26,7 +26,7 @@ export interface YouTubeComment {
 
 export async function youtubeSearchResults(page: ProbePage, options: YouTubeProbeOptions): Promise<{ videos: YouTubeVideo[]; evidence: ExtractListResult['evidence'] & { requestedLimit: number } }> {
   const requestedLimit = normalizeLimit(options.limit);
-  const scanLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), 100);
+  const scanLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), 300);
   const result = await extractList(page, {
     root: youtubeSearchRoot,
     limit: scanLimit,
@@ -118,7 +118,7 @@ function validVideoId(value: string | undefined): string | undefined {
 
 function normalizeLimit(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.trunc(value));
+  return Math.min(Math.max(0, Math.trunc(value)), 100);
 }
 
 function stringValue(value: unknown): string {

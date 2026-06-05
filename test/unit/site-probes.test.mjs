@@ -167,13 +167,13 @@ test('createExtractListExpression can read fields from the root itself', () => {
     },
   });
   const document = fakeDocument([
-    fakeNode('Root Video', { href: 'https://www.youtube.com/watch?v=abc123' }, 'a#video-title'),
+    fakeNode('Root Video', { href: 'https://www.youtube.com/watch?v=abc123XYZ_1' }, 'a#video-title'),
   ]);
 
   const result = Function('document', `return ${expression}`)(document);
 
   assert.deepEqual(result.rows.map(row => ({ ...row })), [
-    { title: 'Root Video', href: 'https://www.youtube.com/watch?v=abc123' },
+    { title: 'Root Video', href: 'https://www.youtube.com/watch?v=abc123XYZ_1' },
   ]);
 });
 
@@ -182,9 +182,9 @@ test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
     profile: 'default',
     evaluate: async () => ({ value: {
       rows: [
-        { title: 'First', href: 'https://www.youtube.com/watch?v=abc123&feature=share', channel: 'Chan A', metadata: '1K views' },
-        { title: 'Duplicate', href: '/watch?v=abc123', channel: 'Chan A', metadata: '1K views' },
-        { title: 'Second', href: 'https://youtu.be/def456', channel: 'Chan B', metadata: '2K views' },
+        { title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views' },
+        { title: 'Duplicate', href: '/watch?v=abc123XYZ_1', channel: 'Chan A', metadata: '1K views' },
+        { title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views' },
         { title: 'No id', href: 'https://www.youtube.com/results?search_query=x', channel: 'Chan C', metadata: '3K views' },
       ],
       count: 4,
@@ -192,8 +192,8 @@ test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
   }, { limit: 5 });
 
   assert.deepEqual(result.videos, [
-    { id: 'abc123', title: 'First', href: 'https://www.youtube.com/watch?v=abc123&feature=share', channel: 'Chan A', metadata: '1K views' },
-    { id: 'def456', title: 'Second', href: 'https://youtu.be/def456', channel: 'Chan B', metadata: '2K views' },
+    { id: 'abc123XYZ_1', title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views' },
+    { id: 'def456XYZ_2', title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views' },
   ]);
   assert.deepEqual(result.evidence, {
     count: 4,
@@ -209,16 +209,32 @@ test('youtubeSearchResults rejects non-youtube and unsafe video hrefs', async ()
     profile: 'default',
     evaluate: async () => ({ value: {
       rows: [
-        { title: 'Good watch', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
-        { title: 'Good short', href: 'https://youtu.be/def456', channel: '', metadata: '' },
-        { title: 'Bad host', href: 'https://evil.example/watch?v=bad123', channel: '', metadata: '' },
-        { title: 'Bad scheme', href: 'javascript:alert(1)?v=script123', channel: '', metadata: '' },
+        { title: 'Good watch', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: '', metadata: '' },
+        { title: 'Good short', href: 'https://youtu.be/def456XYZ_2', channel: '', metadata: '' },
+        { title: 'Bad host', href: 'https://evil.example/watch?v=bad123XYZ_3', channel: '', metadata: '' },
+        { title: 'Bad scheme', href: 'javascript:alert(1)?v=scriptXYZ_4', channel: '', metadata: '' },
       ],
       count: 4,
     } }),
   }, { limit: 5 });
 
-  assert.deepEqual(result.videos.map(video => video.id), ['abc123', 'def456']);
+  assert.deepEqual(result.videos.map(video => video.id), ['abc123XYZ_1', 'def456XYZ_2']);
+});
+
+test('youtubeSearchResults rejects short and long video ids', async () => {
+  const result = await youtubeSearchResults({
+    profile: 'default',
+    evaluate: async () => ({ value: {
+      rows: [
+        { title: 'Short', href: 'https://www.youtube.com/watch?v=short1', channel: '', metadata: '' },
+        { title: 'Long', href: 'https://youtu.be/tooLongVideoId', channel: '', metadata: '' },
+        { title: 'Good', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: '', metadata: '' },
+      ],
+      count: 3,
+    } }),
+  }, { limit: 5 });
+
+  assert.deepEqual(result.videos.map(video => video.id), ['abc123XYZ_1']);
 });
 
 test('youtubeSearchResults preserves requested unique limit after dedupe', async () => {
@@ -229,22 +245,47 @@ test('youtubeSearchResults preserves requested unique limit after dedupe', async
       expressions.push(expression);
       return { value: {
         rows: [
-          { title: 'One container', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
-          { title: 'One anchor', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
-          { title: 'Two container', href: 'https://www.youtube.com/watch?v=def456', channel: '', metadata: '' },
-          { title: 'Two anchor', href: 'https://www.youtube.com/watch?v=def456', channel: '', metadata: '' },
-          { title: 'Three', href: 'https://www.youtube.com/watch?v=ghi789', channel: '', metadata: '' },
+          { title: 'One container', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: '', metadata: '' },
+          { title: 'One anchor', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: '', metadata: '' },
+          { title: 'Two container', href: 'https://www.youtube.com/watch?v=def456XYZ_2', channel: '', metadata: '' },
+          { title: 'Two anchor', href: 'https://www.youtube.com/watch?v=def456XYZ_2', channel: '', metadata: '' },
+          { title: 'Three', href: 'https://www.youtube.com/watch?v=ghi789XYZ_3', channel: '', metadata: '' },
         ],
         count: 5,
       } };
     },
   }, { limit: 3 });
 
-  assert.deepEqual(result.videos.map(video => video.id), ['abc123', 'def456', 'ghi789']);
+  assert.deepEqual(result.videos.map(video => video.id), ['abc123XYZ_1', 'def456XYZ_2', 'ghi789XYZ_3']);
   assert.equal(result.videos.length, 3);
   assert.equal(expressions[0].includes('Math.min(9,'), true);
   assert.equal(result.evidence.requestedLimit, 3);
   assert.equal(JSON.stringify(result.evidence).includes('One container'), false);
+});
+
+test('youtubeSearchResults preserves requested limit of one hundred unique videos', async () => {
+  const expressions = [];
+  const rows = Array.from({ length: 100 }, (_, index) => {
+    const id = videoId(index);
+    return [
+      { title: `Container ${index}`, href: `https://www.youtube.com/watch?v=${id}`, channel: '', metadata: '' },
+      { title: `Anchor ${index}`, href: `https://www.youtube.com/watch?v=${id}`, channel: '', metadata: '' },
+    ];
+  }).flat();
+  const result = await youtubeSearchResults({
+    profile: 'default',
+    evaluate: async (_profile, expression) => {
+      expressions.push(expression);
+      return { value: { rows, count: rows.length } };
+    },
+  }, { limit: 100 });
+
+  assert.equal(result.videos.length, 100);
+  assert.equal(result.videos[0].id, videoId(0));
+  assert.equal(result.videos[99].id, videoId(99));
+  assert.equal(new Set(result.videos.map(video => video.id)).size, 100);
+  assert.equal(expressions[0].includes('Math.min(300,'), true);
+  assert.equal(result.evidence.requestedLimit, 100);
 });
 
 test('youtubeComments returns visible comments and small evidence', async () => {
@@ -300,6 +341,10 @@ function fakeDocument(roots) {
       return selector === '.result' || selector === 'a#video-title' ? roots.map(fakeRoot) : [];
     },
   };
+}
+
+function videoId(index) {
+  return `vid${String(index).padStart(8, '0')}`;
 }
 
 function fakeRoot(fields) {
