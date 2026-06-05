@@ -326,52 +326,57 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
   assert.match(script, /MUTATING step-3/);
 });
 
-test('exportWorkflowCli renders placeholder targets as selector fallbacks', async () => {
+test('exportWorkflowCli rejects placeholder-only targets instead of selector fallbacks', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
-  const script = exportWorkflowCli(validWorkflow({
-    steps: [
-      {
-        id: 'step-1',
-        type: 'type',
-        target: { semantic: { placeholder: 'Search docs' }, confidence: 'high' },
-        value: 'workflow',
-      },
-    ],
-  }));
 
-  assert.match(script, /siteflow --json browser type --selector '\[placeholder="Search docs"\]' --value 'workflow'/);
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'type',
+          target: { semantic: { placeholder: 'Search docs' }, confidence: 'high' },
+          value: 'workflow',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
 });
 
-test('exportWorkflowCli renders role-only click targets as selector fallbacks', async () => {
+test('exportWorkflowCli rejects role-only click targets instead of selector fallbacks', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
-  const script = exportWorkflowCli(validWorkflow({
-    steps: [
-      {
-        id: 'step-1',
-        type: 'click',
-        target: { semantic: { role: 'button' }, confidence: 'high' },
-      },
-    ],
-  }));
 
-  assert.match(script, /siteflow --json browser click --selector '\[role="button"\]'/);
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { semantic: { role: 'button' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
 });
 
-test('exportWorkflowCli renders select aria targets as aria-label selector fallbacks', async () => {
+test('exportWorkflowCli rejects aria-only select targets instead of aria-label selector fallbacks', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
-  const script = exportWorkflowCli(validWorkflow({
-    steps: [
-      {
-        id: 'step-1',
-        type: 'select',
-        target: { semantic: { aria: 'Country' }, confidence: 'high' },
-        option: 'Canada',
-      },
-    ],
-  }));
 
-  assert.match(script, /siteflow --json browser select --selector '\[aria-label="Country"\]' --option 'Canada'/);
-  assert.doesNotMatch(script, /--combobox-text 'Country'/);
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { semantic: { aria: 'Country' }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
 });
 
 test('exportWorkflowCli rejects label-only select targets', async () => {
@@ -384,6 +389,24 @@ test('exportWorkflowCli rejects label-only select targets', async () => {
           id: 'step-1',
           type: 'select',
           target: { semantic: { label: 'Country' }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects select targets with nth even when selector is present', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { structural: { selector: '#country', nth: 1 }, confidence: 'high' },
           option: 'Canada',
         },
       ],

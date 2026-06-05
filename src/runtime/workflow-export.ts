@@ -17,12 +17,13 @@ function unsupportedTarget(command: string, target: RecordedTarget): SiteflowErr
   );
 }
 
-function selectorForAttribute(name: string, value: string): string {
-  return `[${name}=${JSON.stringify(value)}]`;
+function hasUnsupportedSemanticTarget(target: RecordedTarget): boolean {
+  const semantic = target.semantic;
+  return Boolean(semantic?.role || semantic?.placeholder);
 }
 
-function selectorForPlaceholder(placeholder: string): string {
-  return selectorForAttribute('placeholder', placeholder);
+function supportsAriaTarget(command: 'click' | 'type' | 'select'): command is 'click' | 'type' {
+  return command !== 'select';
 }
 
 function waitExpression(step: Extract<WorkflowStep, { type: 'wait' }>): string {
@@ -45,25 +46,25 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
   const structural = target.structural;
   const geometry = target.geometry;
 
+  if (command === 'select' && structural?.nth !== undefined) {
+    throw unsupportedTarget(command, target);
+  }
+
   if (semantic?.text) {
     pushArg(args, command === 'select' ? '--combobox-text' : '--text', semantic.text);
-  } else if (semantic?.aria) {
-    pushArg(args, command === 'select' ? '--selector' : '--aria', command === 'select' ? selectorForAttribute('aria-label', semantic.aria) : semantic.aria);
-  } else if (semantic?.label && command !== 'select') {
+  } else if (supportsAriaTarget(command) && semantic?.aria) {
+    pushArg(args, '--aria', semantic.aria);
+  } else if (supportsAriaTarget(command) && semantic?.label) {
     pushArg(args, '--aria', semantic.label);
-  } else if (semantic?.placeholder) {
-    pushArg(args, '--selector', selectorForPlaceholder(semantic.placeholder));
   } else if (structural?.selector) {
     pushArg(args, '--selector', structural.selector);
-  } else if (semantic?.role) {
-    pushArg(args, '--selector', selectorForAttribute('role', semantic.role));
-  } else if (geometry && command === 'click') {
+  } else if (geometry && command === 'click' && !hasUnsupportedSemanticTarget(target)) {
     pushArg(args, '--xy', `${geometry.x},${geometry.y}`);
   } else {
     throw unsupportedTarget(command, target);
   }
 
-  if (structural?.nth !== undefined && command !== 'select') {
+  if (structural?.nth !== undefined) {
     args.push('--nth', String(structural.nth));
   }
 
