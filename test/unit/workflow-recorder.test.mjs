@@ -3,8 +3,65 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createContext, runInContext } from 'node:vm';
 
 const validation = () => import('../../dist/runtime/workflow-validation.js');
+class FakeInputElement {}
+class FakeTextAreaElement {}
+class FakeSelectElement {}
+
+function fakeRecordedElement(overrides = {}) {
+  return {
+    nodeType: 1,
+    localName: 'div',
+    tagName: 'DIV',
+    id: '',
+    labels: [],
+    isContentEditable: false,
+    innerText: '',
+    textContent: '',
+    getAttribute: () => undefined,
+    closest: () => undefined,
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 100, height: 30 }),
+    ...overrides,
+  };
+}
+
+async function recordFixtureEvent(element, type) {
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const payloads = [];
+  const listeners = {};
+  const window = {
+    __siteflowRecorderInstalled: false,
+    __siteflowRecordEvent: async (payload) => {
+      payloads.push(payload);
+    },
+    location: { href: 'https://example.test/form' },
+    scrollX: 0,
+    scrollY: 0,
+    addEventListener: () => {},
+  };
+  const document = {
+    title: 'Form',
+    addEventListener: (eventType, handler) => {
+      listeners[eventType] = handler;
+    },
+  };
+  const context = createContext({
+    window,
+    document,
+    Node: { ELEMENT_NODE: 1 },
+    HTMLInputElement: FakeInputElement,
+    HTMLTextAreaElement: FakeTextAreaElement,
+    HTMLSelectElement: FakeSelectElement,
+  });
+
+  runInContext(recorderInjectionSource(), context);
+  listeners[type]({ type, target: element });
+  assert.equal(payloads.length, 1);
+  return payloads[0];
+}
+
 
 function validWorkflow(overrides = {}) {
   return {
@@ -722,6 +779,55 @@ test('normalizeRecordedEvents converts select change events to select steps', as
   assert.deepEqual(steps, [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     { id: 'step-2', type: 'select', target, option: 'Canada' },
+  ]);
+});
+
+test('recorded contenteditable input normalizes to type step with visible text value', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const editor = fakeRecordedElement({
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: '',
+    getAttribute: () => undefined,
+  });
+
+  const event = await recordFixtureEvent(editor, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'contenteditable');
+  assert.equal(event.value, 'Draft comment');
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'type', target: event.target, value: 'Draft comment', clear: true },
+  ]);
+});
+
+test('recorded select without stable selector normalizes with semantic selected option text', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: () => undefined,
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'select');
+  assert.equal(event.option, 'Canada');
+  assert.equal(event.target.semantic.text, 'Canada');
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
   ]);
 });
 

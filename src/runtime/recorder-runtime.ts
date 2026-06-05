@@ -210,7 +210,7 @@ export function recorderInjectionSource(): string {
     if (name) return tag + '[name="' + cssEscape(name) + '"]';
     const type = element.getAttribute('type');
     if (type) return tag + '[type="' + cssEscape(type) + '"]';
-    return tag;
+    return undefined;
   }
 
   const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv)/i;
@@ -221,6 +221,21 @@ export function recorderInjectionSource(): string {
 
   function labelFor(element) {
     return element.labels && element.labels.length > 0 ? Array.from(element.labels).map((item) => item.innerText || item.textContent || '').join(' ').trim().replace(/\\s+/g, ' ').slice(0, 120) || undefined : undefined;
+  }
+
+  function normalizedText(value) {
+    return (value || '').trim().replace(/\s+/g, ' ');
+  }
+
+  function selectedOptionTextFor(element) {
+    return element instanceof HTMLSelectElement && element.selectedOptions.length > 0
+      ? normalizedText(element.selectedOptions[0].innerText || element.selectedOptions[0].textContent || '').slice(0, 120) || undefined
+      : undefined;
+  }
+
+  function contenteditableValueFor(element) {
+    const value = typeof element.innerText === 'string' ? element.innerText : element.textContent;
+    return typeof value === 'string' ? value : '';
   }
 
   function hasSensitiveMarker(value) {
@@ -249,7 +264,7 @@ export function recorderInjectionSource(): string {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return {};
     if (element instanceof HTMLSelectElement) {
-      const option = element.selectedOptions.length > 0 ? (element.selectedOptions[0].innerText || element.selectedOptions[0].textContent || '').trim().replace(/\\s+/g, ' ') : undefined;
+      const option = selectedOptionTextFor(element);
       return { element, control: 'select', option, sensitive: isSensitiveControl(element) };
     }
     if (element instanceof HTMLTextAreaElement) return { element, control: 'textarea', sensitive: isSensitiveControl(element) };
@@ -263,11 +278,13 @@ export function recorderInjectionSource(): string {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     const rect = element.getBoundingClientRect();
-    const text = control ? undefined : (element.innerText || element.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120) || undefined;
+    const selectedOptionText = control === 'select' ? selectedOptionTextFor(element) : undefined;
+    const text = control ? selectedOptionText : normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
     const placeholder = element.getAttribute('placeholder') || undefined;
     const role = element.getAttribute('role') || undefined;
+    const selector = selectorFor(element);
     return {
       semantic: {
         ...(role ? { role } : {}),
@@ -277,7 +294,7 @@ export function recorderInjectionSource(): string {
         ...(placeholder ? { placeholder } : {}),
       },
       structural: {
-        ...(selectorFor(element) ? { selector: selectorFor(element) } : {}),
+        ...(selector ? { selector } : {}),
       },
       geometry: {
         x: rect.left + rect.width / 2,
@@ -285,7 +302,7 @@ export function recorderInjectionSource(): string {
         width: rect.width,
         height: rect.height,
       },
-      confidence: selectorFor(element) || aria || label || text ? 'high' : 'low',
+      confidence: selector || aria || label || text ? 'high' : 'low',
     };
   }
 
@@ -313,11 +330,14 @@ export function recorderInjectionSource(): string {
   function recordValueEvent(event) {
     const info = controlInfoFor(event.target);
     const target = targetFor(info.element || event.target, info.control);
+    const value = info.control === 'contenteditable' && info.element
+      ? contenteditableValueFor(info.element)
+      : (typeof info.element?.value === 'string' ? info.element.value : '');
     const payload = {
       ...basePayload(event.type, target),
       ...(info.control ? { control: info.control } : {}),
       ...(info.option ? { option: info.option } : {}),
-      ...(info.sensitive ? { sensitive: true } : { value: typeof info.element?.value === 'string' ? info.element.value : '' }),
+      ...(info.sensitive ? { sensitive: true } : { value }),
     };
     record(payload);
   }
