@@ -1054,6 +1054,45 @@ test('recorded selector-less select is skipped because Phase 1 cannot replay the
   ]);
 });
 
+test('recorded multi-select change is unsupported because Phase 1 cannot replay multiple options', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    multiple: true,
+    value: 'CA',
+    selectedOptions: [
+      { innerText: 'Canada', textContent: 'Canada' },
+      { innerText: 'France', textContent: 'France' },
+    ],
+    getAttribute: (name) => (name === 'name' ? 'countries' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-multiselect-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-multiselect-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('recorded select with stable selector omits semantic selected option text', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
@@ -1409,6 +1448,43 @@ test('unsupported event removes immediately preceding click on same target', asy
       events: [
         { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
         { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported event after proxy click removes immediately preceding click with different target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-proxy-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const proxyTarget = {
+      semantic: { text: 'Accept terms' },
+      structural: { selector: 'label[for="terms"]' },
+      geometry: { x: 50, y: 20, width: 100, height: 30 },
+      confidence: 'high',
+    };
+    const controlTarget = {
+      structural: { selector: '#terms' },
+      geometry: { x: 10, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-proxy-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: proxyTarget, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: controlTarget, url: 'https://example.test/form', title: 'Form' },
       ],
     });
 

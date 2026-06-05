@@ -102,9 +102,6 @@ function hasSameStructuralSelector(left: RecordedTarget | undefined, right: Reco
   return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
 }
 
-function hasSameRecordedTarget(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
-  return hasSameStructuralSelector(left, right) || hasSameGeometry(left, right);
-}
 
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -250,7 +247,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
 
     if (event.type === 'unsupported') {
       const previousStep = steps[steps.length - 1];
-      if (previousStep?.type === 'click' && event.target && hasSameRecordedTarget(previousStep.target, event.target)) {
+      if (previousStep?.type === 'click') {
         steps.pop();
       }
       unsupportedEvents += 1;
@@ -419,6 +416,7 @@ export function recorderInjectionSource(): string {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return {};
     if (element instanceof HTMLSelectElement) {
+      if (element.multiple) return { element, unsupported: true, sensitive: isSensitiveControl(element) };
       const option = selectedOptionTextFor(element);
       return { element, control: 'select', option, sensitive: isSensitiveControl(element) };
     }
