@@ -1287,33 +1287,70 @@ test('unsupported checkbox radio and file events count unsupported on stop', asy
   }
 });
 
-test('recorded text-like input normalizes to type step', async () => {
-  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+test('email and tel inputs are recorded as sensitive and counted unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-contact-sensitive-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const events = [];
+    for (const type of ['email', 'tel']) {
+      const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+        localName: 'input',
+        tagName: 'INPUT',
+        type,
+        value: type === 'email' ? 'user@example.test' : '+15551234567',
+        getAttribute: (name) => {
+          if (name === 'type') return type;
+          if (name === 'name') return `${type}-control`;
+          return undefined;
+        },
+      }));
+
+      const event = await recordFixtureEvent(input, 'input');
+      assert.equal(event.control, 'input');
+      assert.equal(event.sensitive, true);
+      assert.equal(event.value, undefined);
+      events.push(event);
+    }
+
+    const result = await stopRecorderSession({
+      id: 'session-contact-sensitive',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events,
+    });
+
+    const written = await readFile(out, 'utf8');
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+    assert.equal(written.includes('user@example.test'), false);
+    assert.equal(written.includes('+15551234567'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('clicks on sensitive input controls are recorded unsupported instead of replayable clicks', async () => {
   const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
     localName: 'input',
     tagName: 'INPUT',
     type: 'email',
-    value: 'user@example.test',
     getAttribute: (name) => {
       if (name === 'type') return 'email';
-      if (name === 'name') return 'email';
-      if (name === 'placeholder') return 'Email';
+      if (name === 'name') return 'email-control';
       return undefined;
     },
   }));
 
-  const event = await recordFixtureEvent(input, 'input');
-  const steps = normalizeRecordedEvents({
-    startUrl: 'https://example.test/form',
-    events: [event],
-  });
+  const event = await recordFixtureEvent(input, 'click');
 
-  assert.equal(event.control, 'input');
-  assert.equal(event.value, 'user@example.test');
-  assert.deepEqual(steps, [
-    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
-    { id: 'step-2', type: 'type', target: event.target, value: 'user@example.test', clear: true },
-  ]);
+  assert.equal(event.type, 'unsupported');
+  assert.equal(event.value, undefined);
+  assert.equal(event.target.structural.selector, 'input[name="email-control"]');
 });
 
 test('stopRecorderSession skips sensitive input and change events and counts them unsupported', async () => {

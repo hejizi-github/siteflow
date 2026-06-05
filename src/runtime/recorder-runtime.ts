@@ -22,7 +22,7 @@ export interface RecorderSession {
 }
 
 const MUTATING_TEXT = /\b(submit|send|publish|save|post|upload)\b/i;
-const SENSITIVE_FIELD = /(?:password|token|secret|api[\s_-]*key|\bkey\b|otp|one[\s_-]*time[\s_-]*code|card|cvv)/i;
+const SENSITIVE_FIELD = /(?:password|token|secret|api[\s_-]*key|\bkey\b|otp|one[\s_-]*time[\s_-]*code|card|cvv|e-?mail|phone|\btel(?:ephone)?\b)/i;
 
 function hasSensitiveMarker(value: string | undefined): boolean {
   return typeof value === 'string' && SENSITIVE_FIELD.test(value);
@@ -288,7 +288,7 @@ export function recorderInjectionSource(): string {
     return undefined;
   }
 
-  const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv)/i;
+  const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv|e-?mail|phone|\\btel(?:ephone)?\\b)/i;
 
   function elementFor(rawTarget) {
     return rawTarget && rawTarget.nodeType === Node.ELEMENT_NODE ? rawTarget : rawTarget?.parentElement;
@@ -324,9 +324,15 @@ export function recorderInjectionSource(): string {
     return typeof value === 'string' && SENSITIVE_FIELD.test(value);
   }
 
+  function isSensitiveInputType(element) {
+    if (!(element instanceof HTMLInputElement)) return false;
+    const type = (element.getAttribute('type') || element.type || '').toLowerCase();
+    return type === 'email' || type === 'tel' || type === 'phone' || type === 'password';
+  }
+
   function isSensitiveControl(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
-    if (element instanceof HTMLInputElement && element.type === 'password') return true;
+    if (isSensitiveInputType(element)) return true;
     return hasSensitiveMarker(element.getAttribute('name'))
       || hasSensitiveMarker(element.id)
       || hasSensitiveMarker(element.getAttribute('autocomplete'))
@@ -423,7 +429,7 @@ export function recorderInjectionSource(): string {
   document.addEventListener('click', (event) => {
     flushPendingScroll();
     const info = controlInfoFor(event.target);
-    record(basePayload(info.unsupported ? 'unsupported' : 'click', targetFor(info.element || event.target)));
+    record(basePayload(info.unsupported || info.sensitive ? 'unsupported' : 'click', targetFor(info.element || event.target)));
   }, true);
 
   function recordValueEvent(event) {
