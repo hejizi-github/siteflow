@@ -245,6 +245,22 @@ test('validateWorkflow rejects missing or invalid required step fields', async (
   }
 });
 
+test('validateWorkflow accepts recorded Enter key type steps with empty value', async () => {
+  const { validateWorkflow } = await validation();
+  const step = {
+    id: 'step-1',
+    type: 'type',
+    target: { confidence: 'high' },
+    value: '',
+    clear: false,
+    pressEnter: true,
+  };
+
+  const workflow = validateWorkflow(validWorkflow({ steps: [step] }));
+
+  assert.deepEqual(workflow.steps, [step]);
+});
+
 test('validateWorkflow rejects malformed scroll deltas', async () => {
   const { validateWorkflow } = await validation();
   const stepCases = [

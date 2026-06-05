@@ -167,9 +167,11 @@ function validateStep(value: unknown, index: number): WorkflowStep {
   }
 
   if (type === 'type') {
-    requireString(value.value, `steps[${index}].value`);
+    const pressEnter = optionalBoolean(value.pressEnter, `steps[${index}].pressEnter`);
+    if (typeof value.value !== 'string' || (value.value.length === 0 && pressEnter !== true)) {
+      throw workflowError('BAD_WORKFLOW', `steps[${index}].value must be a non-empty string unless pressEnter is true.`);
+    }
     optionalBoolean(value.clear, `steps[${index}].clear`);
-    optionalBoolean(value.pressEnter, `steps[${index}].pressEnter`);
   }
 
   if (type === 'select') requireString(value.option, `steps[${index}].option`);
