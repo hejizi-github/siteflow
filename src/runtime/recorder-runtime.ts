@@ -33,7 +33,7 @@ function isEditableRecordedEvent(event: RecordedEvent): boolean {
 }
 
 function isSensitiveRecordedEvent(event: RecordedEvent): boolean {
-  if (!isEditableRecordedEvent(event)) return false;
+  if (!isEditableRecordedEvent(event) && event.control !== 'select') return false;
   if (event.sensitive === true) return true;
   if (!event.target) return false;
   const semantic = event.target.semantic;
@@ -466,7 +466,7 @@ export function recorderInjectionSource(): string {
     const labelControl = labelControlFor(element);
     const controlElement = labelControl || element;
     if (controlElement instanceof HTMLSelectElement) {
-      if (controlElement.multiple) return { element: controlElement, unsupported: true };
+      if (controlElement.multiple || isSensitiveControl(controlElement)) return { element: controlElement, unsupported: true };
       const option = selectedOptionTextFor(controlElement);
       return { element: controlElement, control: 'select', option };
     }
@@ -674,6 +674,7 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
   }
   const source = recorderInjectionSource();
   await page.addInitScript(source);
+  activeRecorderSessions.set(page, null);
   await page.evaluate(source);
   if (options.url) await page.goto(options.url);
   await page.evaluate(() => (globalThis.window as typeof globalThis.window & { __siteflowResetRecorder?: () => unknown }).__siteflowResetRecorder?.());

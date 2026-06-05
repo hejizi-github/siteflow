@@ -1071,6 +1071,57 @@ test('startRecorderSession reuses page binding and routes events to active sessi
   }
 });
 
+test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-session-isolation-'));
+  try {
+    const setupEvent = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/setup',
+      title: 'Setup',
+    };
+    const page = {
+      binding: undefined,
+      currentUrl: 'https://example.test/start',
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
+      async addInitScript() {},
+      async evaluate(arg) {
+        if (typeof arg !== 'string' && this.binding) await this.binding({}, setupEvent);
+      },
+      async goto(url) {
+        this.currentUrl = url;
+        if (this.binding) await this.binding({}, setupEvent);
+      },
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const first = await startRecorderSession(page, 1, { out: path.join(temp, 'first.json') });
+    const userEvent = {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'First' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    };
+    await page.binding({}, userEvent);
+
+    const second = await startRecorderSession(page, 1, { out: path.join(temp, 'second.json'), url: 'https://example.test/setup' });
+
+    assert.deepEqual(first.events, [userEvent]);
+    assert.equal(second.events.length, 0);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
 test('recorded contenteditable input with semantic label normalizes to type step with visible text value', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const editor = fakeRecordedElement({
@@ -1174,6 +1225,48 @@ test('recorded multi-select change is unsupported because Phase 1 cannot replay 
     assert.equal(event.control, undefined);
     assert.equal(event.option, undefined);
     assert.equal(event.value, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('recorded sensitive select change is unsupported and omits selected option text', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    id: 'email-recipient',
+    value: 'alice@example.test',
+    selectedOptions: [{
+      label: 'alice@example.test',
+      innerText: 'alice@example.test',
+      textContent: 'alice@example.test',
+      value: 'alice@example.test',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'recipient_email' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-sensitive-select-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-sensitive-select',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(event.target.semantic.text, undefined);
     assert.equal(result.unsupportedEvents, 1);
     assert.deepEqual(result.workflow.steps, [
       { id: 'step-1', type: 'open', url: 'https://example.test/form' },
