@@ -87,10 +87,10 @@ export function defineSiteFlow(ctx: SiteCommandContext, site: string, command: s
   return new SiteFlowRunner(ctx, site, command);
 }
 
-export function flowEvidence<T>(value: T, evidence?: FlowStepEvidence): FlowEvidenceValue<T> {
+export function flowEvidence<T>(value: T, evidence: FlowStepEvidence): FlowEvidenceValue<T> {
   return {
     value,
-    evidence: evidence ?? toStepEvidence(value),
+    evidence: evidence ?? {},
     [flowEvidenceMarker]: true,
   };
 }
@@ -110,12 +110,5 @@ function isFlowEvidenceValue(value: unknown): value is FlowEvidenceValue<unknown
 
 function unwrapStepResult(value: unknown): { value: unknown; evidence?: FlowStepEvidence } {
   if (isFlowEvidenceValue(value)) return value;
-  return { value };
-}
-
-function toStepEvidence(value: unknown): FlowStepEvidence {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return value as FlowStepEvidence;
-  }
   return { value };
 }
