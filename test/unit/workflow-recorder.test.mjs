@@ -796,6 +796,36 @@ test('normalizeRecordedEvents merges repeated input events', async () => {
   ]);
 });
 
+test('normalizeRecordedEvents keeps same-label inputs with different geometry separate', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const firstTarget = {
+    semantic: { label: 'Search' },
+    structural: {},
+    geometry: { x: 40, y: 20, width: 80, height: 30 },
+    confidence: 'high',
+  };
+  const secondTarget = {
+    semantic: { label: 'Search' },
+    structural: {},
+    geometry: { x: 160, y: 20, width: 80, height: 30 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/search',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'input', control: 'input', target: firstTarget, value: 'alpha', url: 'https://example.test/search', title: 'Search' },
+      { ts: '2026-06-05T00:00:02.000Z', type: 'input', control: 'input', target: secondTarget, value: 'beta', url: 'https://example.test/search', title: 'Search' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+    { id: 'step-2', type: 'type', target: firstTarget, value: 'alpha', clear: true },
+    { id: 'step-3', type: 'type', target: secondTarget, value: 'beta', clear: true },
+  ]);
+});
+
 test('normalizeRecordedEvents preserves input coalescing across unsupported Tab keydown', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-input-tab-coalesce-'));
@@ -1902,6 +1932,33 @@ test('clicks on sensitive input controls are recorded unsupported instead of rep
   assert.equal(event.type, 'unsupported');
   assert.equal(event.value, undefined);
   assert.equal(event.target.structural.selector, 'input[name="email-control"]');
+});
+
+test('clicks on non-editable sensitive-looking controls are recorded as clicks', async () => {
+  const button = fakeRecordedElement({
+    id: 'email-token',
+    localName: 'button',
+    tagName: 'BUTTON',
+    innerText: 'Email token',
+    textContent: 'Email token',
+    getAttribute: (name) => (name === 'id' ? 'email-token' : undefined),
+  });
+  const link = fakeRecordedElement({
+    id: 'phone-card-link',
+    localName: 'a',
+    tagName: 'A',
+    innerText: 'Phone card details',
+    textContent: 'Phone card details',
+    getAttribute: (name) => (name === 'id' ? 'phone-card-link' : undefined),
+  });
+
+  const buttonEvent = await recordFixtureEvent(button, 'click');
+  const linkEvent = await recordFixtureEvent(link, 'click');
+
+  assert.equal(buttonEvent.type, 'click');
+  assert.equal(linkEvent.type, 'click');
+  assert.equal(buttonEvent.target.structural.selector, '#email-token');
+  assert.equal(linkEvent.target.structural.selector, '#phone-card-link');
 });
 
 test('stopRecorderSession skips sensitive input and change events and counts them unsupported', async () => {

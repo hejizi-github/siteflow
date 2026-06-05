@@ -28,7 +28,12 @@ function hasSensitiveMarker(value: string | undefined): boolean {
   return typeof value === 'string' && SENSITIVE_FIELD.test(value);
 }
 
+function isEditableRecordedEvent(event: RecordedEvent): boolean {
+  return event.control === 'input' || event.control === 'textarea' || event.control === 'contenteditable';
+}
+
 function isSensitiveRecordedEvent(event: RecordedEvent): boolean {
+  if (!isEditableRecordedEvent(event)) return false;
   if (event.sensitive === true) return true;
   if (!event.target) return false;
   const semantic = event.target.semantic;
@@ -50,10 +55,11 @@ function nextStepId(steps: WorkflowStep[]): string {
 }
 
 function targetKey(target: RecordedTarget): string {
-  const semantic = target.semantic ?? null;
-  const structural = target.structural ?? null;
-  if (semantic !== null || structural !== null) return JSON.stringify({ semantic, structural });
-  return JSON.stringify({ geometry: target.geometry ?? null });
+  return JSON.stringify({
+    semantic: target.semantic ?? null,
+    structural: target.structural ?? null,
+    geometry: target.geometry ?? null,
+  });
 }
 
 function isMutatingTarget(target: RecordedTarget): boolean {
@@ -460,20 +466,20 @@ export function recorderInjectionSource(): string {
     const labelControl = labelControlFor(element);
     const controlElement = labelControl || element;
     if (controlElement instanceof HTMLSelectElement) {
-      if (controlElement.multiple) return { element: controlElement, unsupported: true, sensitive: isSensitiveControl(controlElement) };
+      if (controlElement.multiple) return { element: controlElement, unsupported: true };
       const option = selectedOptionTextFor(controlElement);
-      return { element: controlElement, control: 'select', option, sensitive: isSensitiveControl(controlElement) };
+      return { element: controlElement, control: 'select', option };
     }
     if (controlElement instanceof HTMLTextAreaElement) return { element: controlElement, control: 'textarea', sensitive: isSensitiveControl(controlElement) };
     if (controlElement instanceof HTMLInputElement) {
       const type = (controlElement.getAttribute('type') || controlElement.type || 'text').toLowerCase();
-      if (!isTextLikeInput(controlElement) && type !== 'submit' && type !== 'button' && type !== 'reset') return { element: controlElement, unsupported: true, sensitive: isSensitiveControl(controlElement) };
-      if (!isTextLikeInput(controlElement)) return { element: controlElement, sensitive: isSensitiveControl(controlElement) };
+      if (!isTextLikeInput(controlElement) && type !== 'submit' && type !== 'button' && type !== 'reset') return { element: controlElement, unsupported: true };
+      if (!isTextLikeInput(controlElement)) return { element: controlElement };
       return { element: controlElement, control: 'input', sensitive: isSensitiveControl(controlElement) };
     }
     const editable = editableAncestorFor(element);
     if (editable) return { element: editable, control: 'contenteditable', sensitive: isSensitiveControl(editable) };
-    return { element, sensitive: isSensitiveControl(element) };
+    return { element };
   }
 
   function targetFor(rawTarget, control) {
