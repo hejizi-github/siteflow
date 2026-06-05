@@ -82,7 +82,12 @@ test('site flow records failed steps before rethrowing', async () => {
       errors: [],
       next: [],
     })),
-    /comments unavailable/,
+    error => {
+      assert.equal(error.code, 'SITE_FLOW_STEP_FAILED');
+      assert.equal(error.message, 'Step failed before completing.');
+      assert.equal(error.message.includes('comments unavailable'), false);
+      return true;
+    },
   );
 
   const failedStep = runner.steps[1];
@@ -93,6 +98,7 @@ test('site flow records failed steps before rethrowing', async () => {
     code: 'SITE_FLOW_STEP_FAILED',
     message: 'Step failed before completing.',
   });
+  assert.equal(JSON.stringify(failedStep).includes('comments unavailable'), false);
 });
 
 test('site flow runner cannot execute twice or add steps after execution', async () => {

@@ -1,3 +1,4 @@
+import { SiteflowError } from '../../shared/errors.js';
 import type { SiteCommandContext, SiteReceipt, SiteStepReceipt } from '../capabilities.js';
 
 export type FlowStepEvidence = Record<string, unknown>;
@@ -75,7 +76,7 @@ export class SiteFlowRunner {
             message: 'Step failed before completing.',
           },
         });
-        throw error;
+        throw new SiteflowError('SITE_FLOW_STEP_FAILED', 'Step failed before completing.');
       }
     }
   }
@@ -87,10 +88,10 @@ export function defineSiteFlow(ctx: SiteCommandContext, site: string, command: s
   return new SiteFlowRunner(ctx, site, command);
 }
 
-export function flowEvidence<T>(value: T, evidence: FlowStepEvidence): FlowEvidenceValue<T> {
+export function flowEvidence<T>(value: T, evidence: FlowStepEvidence = {}): FlowEvidenceValue<T> {
   return {
     value,
-    evidence: evidence ?? {},
+    evidence,
     [flowEvidenceMarker]: true,
   };
 }
