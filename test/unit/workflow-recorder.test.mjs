@@ -787,13 +787,13 @@ test('normalizeRecordedEvents converts select change events to select steps', as
   ]);
 });
 
-test('recorded contenteditable input normalizes to type step with visible text value', async () => {
+test('recorded contenteditable input with semantic label normalizes to type step with visible text value', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const editor = fakeRecordedElement({
     isContentEditable: true,
     innerText: 'Draft comment',
     textContent: '',
-    getAttribute: () => undefined,
+    getAttribute: (name) => (name === 'aria-label' ? 'Comment editor' : undefined),
   });
 
   const event = await recordFixtureEvent(editor, 'input');
@@ -810,7 +810,32 @@ test('recorded contenteditable input normalizes to type step with visible text v
   ]);
 });
 
-test('recorded select without stable selector normalizes with semantic selected option text', async () => {
+test('recorded geometry-only contenteditable input is skipped because Phase 1 cannot replay it', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const editor = fakeRecordedElement({
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: '',
+    getAttribute: () => undefined,
+  });
+
+  const event = await recordFixtureEvent(editor, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'contenteditable');
+  assert.equal(event.value, 'Draft comment');
+  assert.equal(event.target.semantic.aria, undefined);
+  assert.equal(event.target.semantic.label, undefined);
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('recorded selector-less select is skipped because Phase 1 cannot replay the post-change option target', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
     localName: 'select',
@@ -832,7 +857,6 @@ test('recorded select without stable selector normalizes with semantic selected 
   assert.equal(event.target.structural.selector, undefined);
   assert.deepEqual(steps, [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
-    { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
   ]);
 });
 

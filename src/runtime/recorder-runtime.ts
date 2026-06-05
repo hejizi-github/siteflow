@@ -61,6 +61,10 @@ function isMutatingTarget(target: RecordedTarget): boolean {
   );
 }
 
+function hasReplayableContentEditableTarget(target: RecordedTarget): boolean {
+  return Boolean(target.structural?.selector || target.semantic?.aria || target.semantic?.label);
+}
+
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -87,8 +91,16 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         continue;
       }
 
-      const key = targetKey(event.target);
       if (event.control === 'select') {
+        if (!event.target.structural?.selector) {
+          unsupportedEvents += 1;
+          lastInputTargetKey = undefined;
+          lastInputStep = undefined;
+          lastSelectTargetKey = undefined;
+          lastSelectStep = undefined;
+          continue;
+        }
+        const key = targetKey(event.target);
         const option = event.option ?? event.value ?? '';
         if (lastSelectStep && lastSelectTargetKey === key) {
           lastSelectStep.option = option;
@@ -108,6 +120,16 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         continue;
       }
 
+      if (event.control === 'contenteditable' && !hasReplayableContentEditableTarget(event.target)) {
+        unsupportedEvents += 1;
+        lastInputTargetKey = undefined;
+        lastInputStep = undefined;
+        lastSelectTargetKey = undefined;
+        lastSelectStep = undefined;
+        continue;
+      }
+
+      const key = targetKey(event.target);
       const value = event.value ?? '';
       if (lastInputStep && lastInputTargetKey === key) {
         lastInputStep.value = value;
