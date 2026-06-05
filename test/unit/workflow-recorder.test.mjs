@@ -59,6 +59,7 @@ async function recordFixturePayloads(element, type, eventOverrides = {}) {
   const document = {
     title: 'Form',
     querySelectorAll: eventOverrides.querySelectorAll || (() => []),
+    getElementById: eventOverrides.getElementById || (() => null),
     addEventListener: (eventType, handler) => {
       listeners[eventType] = handler;
     },
@@ -1429,6 +1430,36 @@ test('dragstart and drop record unsupported events with target source', async ()
   }
 });
 
+test('unsupported input event removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-input-unsupported-click-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      geometry: { x: 50, y: 20, width: 100, height: 30 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-input-unsupported-click',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'input', control: 'input', target, value: 'orphan', url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('unsupported event removes immediately preceding click on same target', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-unsupported-'));
@@ -1460,7 +1491,7 @@ test('unsupported event removes immediately preceding click on same target', asy
   }
 });
 
-test('unsupported event after proxy click removes immediately preceding click with different target', async () => {
+test('unsupported event after different target preserves immediately preceding click', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-proxy-click-unsupported-'));
   try {
@@ -1491,9 +1522,41 @@ test('unsupported event after proxy click removes immediately preceding click wi
     assert.equal(result.unsupportedEvents, 1);
     assert.deepEqual(result.workflow.steps, [
       { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+      { id: 'step-2', type: 'click', target: proxyTarget },
     ]);
   } finally {
     await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('label proxy clicks for unsupported inputs record unsupported source target', async () => {
+  for (const type of ['checkbox', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      id: `${type}-control`,
+      type,
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'id') return `${type}-control`;
+        return undefined;
+      },
+    }));
+    const label = fakeRecordedElement({
+      localName: 'label',
+      tagName: 'LABEL',
+      textContent: `Upload ${type}`,
+      getAttribute: (name) => (name === 'for' ? `${type}-control` : undefined),
+    });
+
+    const payloads = await recordFixturePayloads(label, 'click', {
+      getElementById: (id) => (id === `${type}-control` ? input : null),
+    });
+
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+    assert.equal(payloads[0].target.structural.selector, `#${type}-control`);
   }
 });
 

@@ -102,6 +102,18 @@ function hasSameStructuralSelector(left: RecordedTarget | undefined, right: Reco
   return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
 }
 
+function hasSameRecordedTarget(left: RecordedTarget | undefined, right: RecordedTarget | undefined): boolean {
+  if (!left || !right) return false;
+  if (hasSameStructuralSelector(left, right)) return true;
+  return targetKey(left) === targetKey(right);
+}
+
+function removePreviousClickIfSameTarget(steps: WorkflowStep[], target: RecordedTarget | undefined): void {
+  const previousStep = steps[steps.length - 1];
+  if (previousStep?.type === 'click' && hasSameRecordedTarget(previousStep.target, target)) {
+    steps.pop();
+  }
+}
 
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -121,6 +133,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
   for (const event of input.events) {
     if (event.type === 'input' || event.type === 'change') {
       if (!event.target || isSensitiveRecordedEvent(event)) {
+        removePreviousClickIfSameTarget(steps, event.target);
         unsupportedEvents += 1;
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
@@ -178,6 +191,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       }
 
       if (event.control === 'contenteditable' && !hasReplayableContentEditableTarget(event.target)) {
+        removePreviousClickIfSameTarget(steps, event.target);
         unsupportedEvents += 1;
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
@@ -186,6 +200,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         continue;
       }
       if (event.control !== 'contenteditable' && !hasReplayableTypeTarget(event.target)) {
+        removePreviousClickIfSameTarget(steps, event.target);
         unsupportedEvents += 1;
         lastInputTargetKey = undefined;
         lastInputStep = undefined;
@@ -246,10 +261,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
     }
 
     if (event.type === 'unsupported') {
-      const previousStep = steps[steps.length - 1];
-      if (previousStep?.type === 'click') {
-        steps.pop();
-      }
+      removePreviousClickIfSameTarget(steps, event.target);
       unsupportedEvents += 1;
       continue;
     }
@@ -412,20 +424,36 @@ export function recorderInjectionSource(): string {
     return editable && editable.getAttribute('contenteditable') !== 'false' ? editable : undefined;
   }
 
+  function labelControlFor(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE || element.localName !== 'label') return undefined;
+    if (element.control && element.control.nodeType === Node.ELEMENT_NODE) return element.control;
+    const forId = element.getAttribute('for');
+    if (forId && typeof document.getElementById === 'function') {
+      const explicit = document.getElementById(forId);
+      if (explicit && explicit.nodeType === Node.ELEMENT_NODE) return explicit;
+    }
+    if (typeof element.querySelector === 'function') {
+      return element.querySelector('input, textarea, select');
+    }
+    return undefined;
+  }
+
   function controlInfoFor(rawTarget) {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return {};
-    if (element instanceof HTMLSelectElement) {
-      if (element.multiple) return { element, unsupported: true, sensitive: isSensitiveControl(element) };
-      const option = selectedOptionTextFor(element);
-      return { element, control: 'select', option, sensitive: isSensitiveControl(element) };
+    const labelControl = labelControlFor(element);
+    const controlElement = labelControl || element;
+    if (controlElement instanceof HTMLSelectElement) {
+      if (controlElement.multiple) return { element: controlElement, unsupported: true, sensitive: isSensitiveControl(controlElement) };
+      const option = selectedOptionTextFor(controlElement);
+      return { element: controlElement, control: 'select', option, sensitive: isSensitiveControl(controlElement) };
     }
-    if (element instanceof HTMLTextAreaElement) return { element, control: 'textarea', sensitive: isSensitiveControl(element) };
-    if (element instanceof HTMLInputElement) {
-      const type = (element.getAttribute('type') || element.type || 'text').toLowerCase();
-      if (!isTextLikeInput(element) && type !== 'submit' && type !== 'button' && type !== 'reset') return { element, unsupported: true, sensitive: isSensitiveControl(element) };
-      if (!isTextLikeInput(element)) return { element, sensitive: isSensitiveControl(element) };
-      return { element, control: 'input', sensitive: isSensitiveControl(element) };
+    if (controlElement instanceof HTMLTextAreaElement) return { element: controlElement, control: 'textarea', sensitive: isSensitiveControl(controlElement) };
+    if (controlElement instanceof HTMLInputElement) {
+      const type = (controlElement.getAttribute('type') || controlElement.type || 'text').toLowerCase();
+      if (!isTextLikeInput(controlElement) && type !== 'submit' && type !== 'button' && type !== 'reset') return { element: controlElement, unsupported: true, sensitive: isSensitiveControl(controlElement) };
+      if (!isTextLikeInput(controlElement)) return { element: controlElement, sensitive: isSensitiveControl(controlElement) };
+      return { element: controlElement, control: 'input', sensitive: isSensitiveControl(controlElement) };
     }
     const editable = editableAncestorFor(element);
     if (editable) return { element: editable, control: 'contenteditable', sensitive: isSensitiveControl(editable) };
