@@ -421,11 +421,13 @@ export function recorderInjectionSource(): string {
   }
 
   document.addEventListener('click', (event) => {
+    flushPendingScroll();
     const info = controlInfoFor(event.target);
     record(basePayload(info.unsupported ? 'unsupported' : 'click', targetFor(info.element || event.target)));
   }, true);
 
   function recordValueEvent(event) {
+    if (event.type === 'change') flushPendingScroll();
     const info = controlInfoFor(event.target);
     if (info.unsupported) {
       record(basePayload('unsupported', targetFor(info.element || event.target)));
@@ -449,6 +451,7 @@ export function recorderInjectionSource(): string {
 
   document.addEventListener('keydown', (event) => {
     if (!CONTROL_KEYS.has(event.key)) return;
+    flushPendingScroll();
     const info = controlInfoFor(event.target);
     if (info.unsupported) {
       record(basePayload('unsupported', targetFor(info.element || event.target)));
@@ -476,7 +479,17 @@ export function recorderInjectionSource(): string {
     return record({ ...basePayload('scroll'), deltaX, deltaY });
   }
 
+  function resetRecorderState() {
+    if (scrollTimer !== undefined) window.clearTimeout(scrollTimer);
+    scrollTimer = undefined;
+    scrollDeltaX = 0;
+    scrollDeltaY = 0;
+    lastScrollX = window.scrollX;
+    lastScrollY = window.scrollY;
+  }
+
   window.__siteflowFlushRecorder = flushPendingScroll;
+  window.__siteflowResetRecorder = resetRecorderState;
 
   window.addEventListener('scroll', () => {
     const nextX = window.scrollX;
@@ -529,6 +542,7 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
   await page.addInitScript(source);
   await page.evaluate(source);
   if (options.url) await page.goto(options.url);
+  await page.evaluate(() => (globalThis.window as typeof globalThis.window & { __siteflowResetRecorder?: () => unknown }).__siteflowResetRecorder?.());
 
   return session;
 }

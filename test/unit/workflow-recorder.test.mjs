@@ -1179,6 +1179,47 @@ test('recorder injection exposes synchronous scroll flush function', async () =>
   assert.match(source, /clearTimeout\(scrollTimer\)/);
 });
 
+test('recorder injection exposes reset and flushes scroll before state-changing events', async () => {
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const source = recorderInjectionSource();
+  assert.match(source, /window\.__siteflowResetRecorder\s*=/);
+  assert.match(source, /function resetRecorderState\(\)/);
+  assert.match(source, /lastScrollX\s*=\s*window\.scrollX/);
+  assert.match(source, /lastScrollY\s*=\s*window\.scrollY/);
+  assert.match(source, /document\.addEventListener\('click',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(/);
+  assert.match(source, /function recordValueEvent\(event\) \{[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(payload\);/);
+  assert.match(source, /document\.addEventListener\('keydown',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(\{/);
+});
+
+test('startRecorderSession resets installed recorder state before returning active session', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-reset-'));
+  try {
+    const calls = [];
+    const page = {
+      async exposeBinding() {},
+      async addInitScript(source) {
+        calls.push(typeof source);
+      },
+      async evaluate(arg) {
+        calls.push(typeof arg === 'string' ? 'inject' : arg.toString());
+      },
+      url() {
+        return 'https://example.test/start';
+      },
+    };
+
+    await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json') });
+
+    assert.equal(calls[0], 'string');
+    assert.equal(calls[1], 'inject');
+    assert.match(calls[2], /__siteflowResetRecorder/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
 test('stopRecorderSession flushes pending page scroll before serializing', async () => {
   const { startRecorderSession, stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-flush-'));
@@ -1199,7 +1240,7 @@ test('stopRecorderSession flushes pending page scroll before serializing', async
       },
       async addInitScript() {},
       async evaluate(arg) {
-        if (typeof arg === 'function') await this.binding({}, pendingScroll);
+        if (typeof arg === 'function' && arg.toString().includes('__siteflowFlushRecorder')) await this.binding({}, pendingScroll);
       },
       url() {
         return 'https://example.test/start';
