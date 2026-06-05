@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.worktrees/
+
 
 # Local Siteflow state and test homes
 .siteflow/
