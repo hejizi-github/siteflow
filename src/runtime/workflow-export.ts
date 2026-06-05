@@ -54,7 +54,7 @@ function stepCommand(step: WorkflowStep): string {
       return `siteflow --json eval ${shellQuote(`window.scrollBy(${step.deltaX}, ${step.deltaY})`)}`;
     case 'wait': {
       const ms = step.ms ?? 1000;
-      const expression = `(() => { const pending = Promise.withResolvers(); setTimeout(pending.resolve, ${ms}); return pending.promise; })()`;
+      const expression = `new Promise(resolve => setTimeout(resolve, ${ms}))`;
       return `siteflow --json eval ${shellQuote(expression)}`;
     }
     case 'screenshot': {
