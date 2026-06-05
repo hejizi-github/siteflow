@@ -632,3 +632,46 @@ test('exportWorkflowCli preserves conditional wait semantics', async () => {
   assert.match(script, /window\.location\.href\.includes\("\/done"\)/);
   assert.doesNotMatch(script, /setTimeout\(resolve, 1000\)/);
 });
+
+test('normalizeRecordedEvents merges repeated input events', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Search' },
+    structural: { selector: 'input[name="q"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/search',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'input', target, value: 'a', url: 'https://example.test/search', title: 'Search' },
+      { ts: '2026-06-05T00:00:02.000Z', type: 'input', target, value: 'apple', url: 'https://example.test/search', title: 'Search' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+    { id: 'step-2', type: 'type', target, value: 'apple', clear: true },
+  ]);
+});
+
+test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { text: 'Submit' },
+    structural: { selector: 'button[type="submit"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target, mutating: true },
+  ]);
+});
