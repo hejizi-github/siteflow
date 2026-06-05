@@ -40,6 +40,72 @@ function requireBoolean(value: unknown, field: string): boolean {
   return value;
 }
 
+function requireFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw workflowError('BAD_WORKFLOW', `${field} must be a finite number.`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
+    throw workflowError('BAD_WORKFLOW', `${field} must be a string.`);
+  }
+  return value;
+}
+
+function optionalFiniteNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  return requireFiniteNumber(value, field);
+}
+
+function validateTargetSemantic(value: unknown, field: string): RecordedTarget['semantic'] {
+  if (value === undefined) return undefined;
+  const semantic = requireObject(value, field);
+  const role = optionalString(semantic.role, `${field}.role`);
+  const aria = optionalString(semantic.aria, `${field}.aria`);
+  const label = optionalString(semantic.label, `${field}.label`);
+  const text = optionalString(semantic.text, `${field}.text`);
+  const placeholder = optionalString(semantic.placeholder, `${field}.placeholder`);
+
+  return {
+    ...(role === undefined ? {} : { role }),
+    ...(aria === undefined ? {} : { aria }),
+    ...(label === undefined ? {} : { label }),
+    ...(text === undefined ? {} : { text }),
+    ...(placeholder === undefined ? {} : { placeholder }),
+  };
+}
+
+function validateTargetStructural(value: unknown, field: string): RecordedTarget['structural'] {
+  if (value === undefined) return undefined;
+  const structural = requireObject(value, field);
+  const selector = optionalString(structural.selector, `${field}.selector`);
+  const xpath = optionalString(structural.xpath, `${field}.xpath`);
+  const nth = optionalFiniteNumber(structural.nth, `${field}.nth`);
+
+  return {
+    ...(selector === undefined ? {} : { selector }),
+    ...(xpath === undefined ? {} : { xpath }),
+    ...(nth === undefined ? {} : { nth }),
+  };
+}
+
+function validateTargetGeometry(value: unknown, field: string): RecordedTarget['geometry'] {
+  if (value === undefined) return undefined;
+  const geometry = requireObject(value, field);
+  const width = optionalFiniteNumber(geometry.width, `${field}.width`);
+  const height = optionalFiniteNumber(geometry.height, `${field}.height`);
+
+  return {
+    x: requireFiniteNumber(geometry.x, `${field}.x`),
+    y: requireFiniteNumber(geometry.y, `${field}.y`),
+    ...(width === undefined ? {} : { width }),
+    ...(height === undefined ? {} : { height }),
+  };
+}
+
 function validateVariable(value: unknown, index: number): WorkflowVariable {
   const variable = requireObject(value, `variables[${index}]`);
   const name = requireString(variable.name, `variables[${index}].name`);
@@ -63,7 +129,16 @@ function validateTarget(value: unknown, field: string): RecordedTarget {
     throw workflowError('BAD_WORKFLOW', `${field}.confidence must be high, medium, or low.`);
   }
 
-  return { ...target, confidence } as RecordedTarget;
+  const semantic = validateTargetSemantic(target.semantic, `${field}.semantic`);
+  const structural = validateTargetStructural(target.structural, `${field}.structural`);
+  const geometry = validateTargetGeometry(target.geometry, `${field}.geometry`);
+
+  return {
+    ...(semantic === undefined ? {} : { semantic }),
+    ...(structural === undefined ? {} : { structural }),
+    ...(geometry === undefined ? {} : { geometry }),
+    confidence,
+  };
 }
 
 function validateStep(value: unknown, index: number): WorkflowStep {

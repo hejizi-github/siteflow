@@ -30,6 +30,64 @@ test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
   assert.equal(workflow.steps.length, 2);
 });
 
+test('validateWorkflow preserves optional workflow fields and defaults variables/evidence', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow({
+    version: 1,
+    kind: 'siteflow.workflow',
+    name: 'Checkout',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    steps: [{ id: 'step-1', type: 'open', url: 'https://example.com/' }],
+  });
+
+  assert.equal(workflow.name, 'Checkout');
+  assert.deepEqual(workflow.variables, []);
+  assert.deepEqual(workflow.steps, [{ id: 'step-1', type: 'open', url: 'https://example.com/' }]);
+  assert.deepEqual(workflow.evidence, {});
+});
+
+test('validateWorkflow preserves variables, steps, and evidence when supplied', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow(validWorkflow({
+    name: 'Signup',
+    variables: [{ name: 'email', source: 'input', sensitive: false, required: true }],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      {
+        id: 'step-2',
+        type: 'click',
+        target: {
+          semantic: { role: 'button', aria: 'Submit', label: 'Submit', text: 'Submit', placeholder: 'Email' },
+          structural: { selector: '#submit', xpath: '//*[@id="submit"]', nth: 0 },
+          geometry: { x: 10, y: 20, width: 100, height: 30 },
+          confidence: 'medium',
+        },
+      },
+      { id: 'step-3', type: 'type', target: { confidence: 'low' }, value: 'hello' },
+    ],
+    evidence: { pages: 1, events: 2 },
+  }));
+
+  assert.equal(workflow.name, 'Signup');
+  assert.deepEqual(workflow.variables, [{ name: 'email', source: 'input', sensitive: false, required: true }]);
+  assert.deepEqual(workflow.steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.com/' },
+    {
+      id: 'step-2',
+      type: 'click',
+      target: {
+        semantic: { role: 'button', aria: 'Submit', label: 'Submit', text: 'Submit', placeholder: 'Email' },
+        structural: { selector: '#submit', xpath: '//*[@id="submit"]', nth: 0 },
+        geometry: { x: 10, y: 20, width: 100, height: 30 },
+        confidence: 'medium',
+      },
+    },
+    { id: 'step-3', type: 'type', target: { confidence: 'low' }, value: 'hello' },
+  ]);
+  assert.deepEqual(workflow.evidence, { pages: 1, events: 2 });
+});
+
 test('validateWorkflow rejects unsupported workflow versions', async () => {
   const { validateWorkflow } = await validation();
   assert.throws(
@@ -77,6 +135,58 @@ test('validateWorkflow rejects malformed required step targets', async () => {
     { id: 'step-1', type: 'type', target: {}, value: 'hello' },
     { id: 'step-1', type: 'select', target: {}, option: 'A' },
   ]) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects malformed nested target fields', async () => {
+  const { validateWorkflow } = await validation();
+  const targetCases = [
+    { confidence: 'bad' },
+    { confidence: 'high', semantic: 'button' },
+    { confidence: 'high', semantic: { role: 1 } },
+    { confidence: 'high', semantic: { aria: 1 } },
+    { confidence: 'high', semantic: { label: 1 } },
+    { confidence: 'high', semantic: { text: 1 } },
+    { confidence: 'high', semantic: { placeholder: 1 } },
+    { confidence: 'high', structural: 'selector' },
+    { confidence: 'high', structural: { selector: 1 } },
+    { confidence: 'high', structural: { xpath: 1 } },
+    { confidence: 'high', structural: { nth: Number.NaN } },
+    { confidence: 'high', geometry: 'box' },
+    { confidence: 'high', geometry: { x: 'bad', y: 0 } },
+    { confidence: 'high', geometry: { x: 0, y: Number.POSITIVE_INFINITY } },
+    { confidence: 'high', geometry: { x: 0, y: 0, width: '100' } },
+    { confidence: 'high', geometry: { x: 0, y: 0, height: Number.NaN } },
+  ];
+
+  for (const target of targetCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [{ id: 'step-1', type: 'click', target }] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects missing or invalid required step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const validTarget = { confidence: 'low' };
+  const stepCases = [
+    { id: 'step-1', type: 'open' },
+    { id: 'step-1', type: 'open', url: '' },
+    { id: 'step-1', type: 'open', url: 123 },
+    { id: 'step-1', type: 'type', target: validTarget },
+    { id: 'step-1', type: 'type', target: validTarget, value: '' },
+    { id: 'step-1', type: 'type', target: validTarget, value: 123 },
+    { id: 'step-1', type: 'select', target: validTarget },
+    { id: 'step-1', type: 'select', target: validTarget, option: '' },
+    { id: 'step-1', type: 'select', target: validTarget, option: 123 },
+  ];
+
+  for (const step of stepCases) {
     assert.throws(
       () => validateWorkflow(validWorkflow({ steps: [step] })),
       /BAD_WORKFLOW/,
