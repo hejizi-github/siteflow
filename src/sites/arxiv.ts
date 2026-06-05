@@ -45,7 +45,7 @@ async function collectSearch(ctx: SiteCommandContext, query: string, limit: numb
   papers: Array<{ id?: string; title: string; authors: string[]; abstract?: string; submitted?: string; absUrl?: string; pdfUrl?: string; subjects?: string[] }>;
 }> {
   const url = `${ORIGIN}/search/?query=${encodeURIComponent(query)}&searchtype=all&abstracts=show&order=-announced_date_first&size=${encodeURIComponent(String(searchPageSize(limit)))}`;
-  await openSitePage(ctx.profile, url);
+  const page = await openSitePage(ctx.profile, url);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -64,7 +64,7 @@ async function collectSearch(ctx: SiteCommandContext, query: string, limit: numb
       return { id, title, authors, abstract, submitted, absUrl, pdfUrl: pdfLink ? abs(pdfLink.getAttribute('href') || '') : undefined, subjects };
     }).filter(paper => paper.title);
     return { url: location.href, title: document.title, query: ${JSON.stringify(query)}, papers };
-  })()`);
+  })()`, page.id);
   return result.value as {
     url: string;
     title: string;
@@ -85,7 +85,7 @@ async function collectPaper(ctx: SiteCommandContext, id: string): Promise<{
   sourceUrl: string;
 }> {
   const normalized = normalizeId(id);
-  await openSitePage(ctx.profile, `${ORIGIN}/abs/${encodeURIComponent(normalized)}`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/abs/${encodeURIComponent(normalized)}`);
   await sleep(1200);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -105,7 +105,7 @@ async function collectPaper(ctx: SiteCommandContext, id: string): Promise<{
       pdfUrl: 'https://arxiv.org/pdf/' + id,
       sourceUrl: 'https://arxiv.org/e-print/' + id
     };
-  })()`);
+  })()`, page.id);
   return result.value as { url: string; title: string; id: string; paperTitle?: string; authors: string[]; abstract?: string; subjects?: string[]; pdfUrl: string; sourceUrl: string };
 }
 
@@ -116,7 +116,7 @@ async function collectLatest(ctx: SiteCommandContext, category: string, limit: n
   papers: Array<{ id?: string; title: string; authors: string[]; absUrl?: string; pdfUrl?: string }>;
 }> {
   const normalized = category || 'cs';
-  await openSitePage(ctx.profile, `${ORIGIN}/list/${encodeURIComponent(normalized)}/new`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/list/${encodeURIComponent(normalized)}/new`);
   await sleep(1200);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -133,7 +133,7 @@ async function collectLatest(ctx: SiteCommandContext, category: string, limit: n
       return { id, title, authors, absUrl, pdfUrl: pdfLink ? abs(pdfLink.getAttribute('href') || '') : undefined };
     }).filter(paper => paper.title).slice(0, ${JSON.stringify(limit)});
     return { url: location.href, title: document.title, category: ${JSON.stringify(normalized)}, papers };
-  })()`);
+  })()`, page.id);
   return result.value as { url: string; title: string; category: string; papers: Array<{ id?: string; title: string; authors: string[]; absUrl?: string; pdfUrl?: string }> };
 }
 

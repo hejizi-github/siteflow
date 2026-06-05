@@ -38,7 +38,7 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
       if (videos.length >= ${JSON.stringify(limit)}) break;
     }
     return { url: location.href, title: document.title, videos };
-  })()`);
+  })()`, page.pageId);
   return siteReceipt(SITE, 'search', { keyword: options.keyword, page: pageNum, pageId: page.pageId, limit, ...(result.value as Record<string, unknown>), sideEffects: [] });
 }
 
@@ -112,7 +112,7 @@ async function runCreator(ctx: SiteCommandContext, options: CreatorOptions): Pro
       text: clean(document.body.innerText).slice(0, 5000),
       links: Array.from(document.querySelectorAll('a[href]')).slice(0, 40).map(a => ({ text: clean(a.textContent), href: a.href }))
     };
-  })()`);
+  })()`, page.pageId);
   return siteReceipt(SITE, 'creator', { mid: options.mid, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
 }
 

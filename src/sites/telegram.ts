@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { runSiteCommand, clampInt, evaluateSiteExpression, listSiteNetwork, listSitePages, navigateSitePage, openSitePage, sleep } from './capabilities.js';
+import { addSitePageIdOption, runSiteCommand, clampInt, evaluateSiteExpression, listSiteNetwork, listSitePages, openOrNavigateSitePage, openSitePage, parseSitePageId, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'telegram';
@@ -28,6 +28,7 @@ interface ChatsOptions {
 
 interface WebTargetOptions {
   target: string;
+  pageId?: string;
 }
 
 interface WebMessagesOptions extends WebTargetOptions {
@@ -73,12 +74,6 @@ const clampLimit = (value: string | undefined, fallback = 20, max = 100): number
 
 const clampIndex = (value: string | undefined, fallback = 0, max = Number.MAX_SAFE_INTEGER): number => clampInt(value, fallback, 0, max);
 
-function optionalPageId(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) return undefined;
-  return parsed;
-}
 
 const clampPages = (value: string | undefined): number => clampInt(value, 0, 0, 200);
 
@@ -179,7 +174,7 @@ async function collectMessages(ctx: SiteCommandContext, url: string, limit: numb
     hasUnsupportedMedia: boolean;
   }>;
 }> {
-  await openSitePage(ctx.profile, url);
+  const page = await openSitePage(ctx.profile, url);
   await sleep(1800);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -220,7 +215,7 @@ async function collectMessages(ctx: SiteCommandContext, url: string, limit: numb
       blockSignals,
       messages
     };
-  })()`);
+  })()`, page.id);
   const value = result.value as {
     url: string;
     title: string;
@@ -293,7 +288,7 @@ async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
     unread?: string;
   }>;
 }> {
-  await openSitePage(ctx.profile, 'https://web.telegram.org/a/');
+  const page = await openSitePage(ctx.profile, 'https://web.telegram.org/a/');
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -350,7 +345,7 @@ async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
       loginSignals,
       chats
     };
-  })()`);
+  })()`, page.id);
   return result.value as {
     url: string;
     title: string;
@@ -387,20 +382,13 @@ async function runChats(ctx: SiteCommandContext, options: ChatsOptions): Promise
 async function openWebTarget(ctx: SiteCommandContext, target: string, pageId?: number): Promise<{
   url: string;
   title: string;
+  pageId?: number;
   header?: string;
   hasMessagePane: boolean;
   hasComposer: boolean;
 }> {
   const url = webChatUrl(target);
-  if (pageId) {
-    const pages = await listSitePages(ctx.profile);
-    const current = pages.find(page => page.id === pageId);
-    if (!current?.url.startsWith(url)) {
-      await navigateSitePage(ctx.profile, url, pageId);
-    }
-  } else {
-    await openSitePage(ctx.profile, url);
-  }
+  const page = await openOrNavigateSitePage(ctx.profile, url, pageId ? String(pageId) : undefined);
   await sleep(2500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -411,12 +399,12 @@ async function openWebTarget(ctx: SiteCommandContext, target: string, pageId?: n
       hasMessagePane: Boolean(document.querySelector('.MessageList, [class*="MessageList"], [class*="message-list"], [data-message-id], .Message')),
       hasComposer: Boolean(document.querySelector('[contenteditable="true"], textarea, input[type="text"]'))
     };
-  })()`, pageId);
-  return result.value as { url: string; title: string; header?: string; hasMessagePane: boolean; hasComposer: boolean };
+  })()`, page.pageId);
+  return { ...(result.value as { url: string; title: string; header?: string; hasMessagePane: boolean; hasComposer: boolean }), pageId: page.pageId };
 }
 
 async function runOpen(ctx: SiteCommandContext, options: WebTargetOptions): Promise<SiteReceipt> {
-  const data = await openWebTarget(ctx, options.target);
+  const data = await openWebTarget(ctx, options.target, parseSitePageId(options.pageId));
   return {
     site: SITE,
     command: 'open',
@@ -429,6 +417,7 @@ async function runOpen(ctx: SiteCommandContext, options: WebTargetOptions): Prom
       header: data.header,
       hasMessagePane: data.hasMessagePane,
       hasComposer: data.hasComposer,
+      pageId: data.pageId,
       sideEffects: [],
     },
     errors: data.hasMessagePane ? [] : [{ code: 'CHAT_NOT_LOADED', message: 'Telegram Web did not expose a message pane for this target.' }],
@@ -450,8 +439,8 @@ async function collectWebMessages(ctx: SiteCommandContext, options: WebMessagesO
   pageId?: number;
   stopReason: 'target_reached' | 'edge_reached' | 'max_pages' | 'no_scroll_requested';
 }> {
-  const pageId = optionalPageId(options.pageId);
-  await openWebTarget(ctx, options.target, pageId);
+  const opened = await openWebTarget(ctx, options.target, parseSitePageId(options.pageId));
+  const pageId = opened.pageId;
   const limit = clampLimit(options.limit, 50, 500);
   const pages = clampPages(options.pages);
   const direction = scrollDirection(options.direction);
@@ -772,7 +761,7 @@ async function runWatch(ctx: SiteCommandContext, options: WatchOptions): Promise
   const durationMs = parseDurationMs(options.duration, 3_600_000, 24 * 3_600_000);
   const intervalMs = parseDurationMs(options.interval, 60_000, 3_600_000);
   const maxMessages = clampTotalMessages(options.maxMessages);
-  const pageId = await resolveWatchPageId(ctx, options.target, optionalPageId(options.pageId));
+  const pageId = await resolveWatchPageId(ctx, options.target, parseSitePageId(options.pageId));
   const startedAt = new Date();
   const deadline = Date.now() + durationMs;
   const outputPath = options.out ? path.resolve(options.out) : undefined;
@@ -942,10 +931,10 @@ export const telegramAdapter: SiteAdapter = {
       name: 'open',
       description: 'Open a Telegram Web chat, channel, bot, or peer URL for a logged-in profile',
       configure(command: Command): void {
-        command
-          .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
+        addSitePageIdOption(command
+          .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases'))
           .action(async function (target: string) {
-            await runSiteCommand(this, ctx => runOpen(ctx, { target }));
+            await runSiteCommand(this, ctx => runOpen(ctx, { ...this.opts<Omit<WebTargetOptions, 'target'>>(), target }));
           });
       },
     },
@@ -953,12 +942,11 @@ export const telegramAdapter: SiteAdapter = {
       name: 'messages',
       description: 'Collect visible messages from a logged-in Telegram Web chat without sending anything',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .option('--limit <n>', 'number of visible deduped messages to return', '50')
           .option('--pages <n>', 'number of scroll pages before collecting messages', '0')
-          .option('--direction <up|down>', 'scroll direction before collecting messages', 'up')
-          .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
+          .option('--direction <up|down>', 'scroll direction before collecting messages', 'up'))
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runMessages(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
@@ -969,12 +957,11 @@ export const telegramAdapter: SiteAdapter = {
       name: 'links',
       description: 'List links found in visible messages from a logged-in Telegram Web chat',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .option('--limit <n>', 'number of visible deduped messages to inspect', '50')
           .option('--pages <n>', 'number of scroll pages before collecting links', '0')
-          .option('--direction <up|down>', 'scroll direction before collecting links', 'up')
-          .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
+          .option('--direction <up|down>', 'scroll direction before collecting links', 'up'))
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runLinks(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
@@ -985,12 +972,11 @@ export const telegramAdapter: SiteAdapter = {
       name: 'media',
       description: 'List media-bearing messages and visible media clues from a logged-in Telegram Web chat',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .option('--limit <n>', 'number of visible deduped messages to inspect', '50')
           .option('--pages <n>', 'number of scroll pages before collecting media', '0')
-          .option('--direction <up|down>', 'scroll direction before collecting media', 'up')
-          .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
+          .option('--direction <up|down>', 'scroll direction before collecting media', 'up'))
           .option('--min-messages <n>', 'keep scrolling until at least this many visible messages are collected, or the scroll edge/max pages is reached')
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runMedia(ctx, { ...this.opts<Omit<WebMessagesOptions, 'target'>>(), target }));
@@ -1001,13 +987,12 @@ export const telegramAdapter: SiteAdapter = {
       name: 'watch',
       description: 'Watch a Telegram Web chat for new visible messages by polling and scrolling downward',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<chat-url>', 'Telegram Web chat URL from `telegram chats` href; peer id, @username, and t.me URL are accepted as aliases')
           .option('--duration <time>', 'total watch duration, for example 30m, 1h, 2小时', '1h')
           .option('--interval <time>', 'sleep time between polling rounds, for example 30s, 2m', '60s')
           .option('--limit <n>', 'number of deduped messages to inspect per polling round', '50')
-          .option('--pages <n>', 'number of downward scroll pages per polling round', '3')
-          .option('--page-id <n>', 'existing browser tab id from `siteflow browser pages`')
+          .option('--pages <n>', 'number of downward scroll pages per polling round', '3'))
           .option('--min-messages <n>', 'per-round target messages before stopping that polling round')
           .option('--max-messages <n>', 'maximum deduped messages returned across the whole watch run', '1000')
           .option('--out <file>', 'write watch data to a JSON file after every polling round')

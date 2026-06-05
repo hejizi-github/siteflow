@@ -244,7 +244,7 @@ function buildSeoSuggestions(keyword: string, sourceTitle: string | undefined, t
 }
 
 async function collectSearchPage(ctx: SiteCommandContext, keyword: string, limit: number): Promise<SearchPageData> {
-  await openSitePage(ctx.profile, keywordUrl(keyword));
+  const page = await openSitePage(ctx.profile, keywordUrl(keyword));
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -286,12 +286,12 @@ async function collectSearchPage(ctx: SiteCommandContext, keyword: string, limit
       filters: Array.from(new Set(filters)).slice(0, 30),
       items: items.slice(0, ${JSON.stringify(limit)})
     };
-  })()`);
+  })()`, page.id);
   return result.value as SearchPageData;
 }
 
 async function collectHomePage(ctx: SiteCommandContext, limit: number): Promise<HomePageData> {
-  await openSitePage(ctx.profile, homeUrl());
+  const page = await openSitePage(ctx.profile, homeUrl());
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -332,12 +332,12 @@ async function collectHomePage(ctx: SiteCommandContext, limit: number): Promise<
       items: items.slice(0, ${JSON.stringify(limit)}),
       textExcerpt: bodyText.slice(0, 3000)
     };
-  })()`);
+  })()`, page.id);
   return result.value as HomePageData;
 }
 
 async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Promise<SuggestPageData> {
-  await openSitePage(ctx.profile, keywordUrl(keyword));
+  const page = await openSitePage(ctx.profile, keywordUrl(keyword));
   await sleep(3500);
 
   const pageResult = await evaluateSiteExpression(ctx.profile, `(() => {
@@ -351,7 +351,7 @@ async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Pro
       relatedSuggestions: Array.from(new Set(bodyLines.filter(line => line.includes(${JSON.stringify(keyword)}) && line.length <= 18 && line !== ${JSON.stringify(keyword)}))).slice(0, 20),
       filters: Array.from(new Set(bodyLines.filter(line => /^(产地|材质|风格|应用场景|加工定制|综合|销量|价格|起订量|店铺商品数|所在地区|商家特色|经营模式|一件代发|48H发货|退货包运费|1688严选|跨境证书)$/.test(line)))).slice(0, 30)
     };
-  })()`);
+  })()`, page.id);
   const pageData = pageResult.value as Omit<SuggestPageData, 'suggestions' | 'source'>;
 
   const entries = await listSiteNetwork(ctx.profile, 600);
@@ -395,7 +395,7 @@ async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Pro
 }
 
 async function collectProductPage(ctx: SiteCommandContext, offer: string): Promise<ProductPageData> {
-  await openSitePage(ctx.profile, productUrl(offer));
+  const page = await openSitePage(ctx.profile, productUrl(offer));
   await sleep(4500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -440,7 +440,7 @@ async function collectProductPage(ctx: SiteCommandContext, offer: string): Promi
       imageUrls,
       textExcerpt: bodyText.slice(0, 3000)
     };
-  })()`);
+  })()`, page.id);
   return result.value as ProductPageData;
 }
 

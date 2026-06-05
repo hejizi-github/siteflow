@@ -469,7 +469,7 @@ async function fetchText(url: string): Promise<{ ok: boolean; status?: number; t
 }
 
 async function collectHome(ctx: SiteCommandContext, limit: number): Promise<{ url: string; title: string; ageGate: boolean; cards: ComicCard[]; textExcerpt: string }> {
-  await openSitePage(ctx.profile, `${ORIGIN}/home`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/home`);
   await sleep(2000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -502,12 +502,12 @@ async function collectHome(ctx: SiteCommandContext, limit: number): Promise<{ ur
       cards: uniqueCards,
       textExcerpt: document.body.innerText.slice(0, 1200)
     };
-  })()`);
+  })()`, page.id);
   return result.value as { url: string; title: string; ageGate: boolean; cards: ComicCard[]; textExcerpt: string };
 }
 
 async function collectSearch(ctx: SiteCommandContext, keyword: string, limit: number): Promise<{ url: string; title: string; keyword: string; resultCount: number; cards: ComicCard[] }> {
-  await openSitePage(ctx.profile, `${ORIGIN}/search?term=${encodeURIComponent(keyword)}&page=0`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/search?term=${encodeURIComponent(keyword)}&page=0`);
   await sleep(2500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -534,12 +534,12 @@ async function collectSearch(ctx: SiteCommandContext, keyword: string, limit: nu
       resultCount: countMatch ? Number(countMatch[1]) : cards.length,
       cards
     };
-  })()`);
+  })()`, page.id);
   return result.value as { url: string; title: string; keyword: string; resultCount: number; cards: ComicCard[] };
 }
 
 async function collectComic(ctx: SiteCommandContext, target: string): Promise<ComicDetail> {
-  await openSitePage(ctx.profile, comicUrl(target));
+  const page = await openSitePage(ctx.profile, comicUrl(target));
   await sleep(2000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -589,12 +589,12 @@ async function collectComic(ctx: SiteCommandContext, target: string): Promise<Co
       chapterCount: uniqueChapters.length,
       chapters: uniqueChapters
     };
-  })()`);
+  })()`, page.id);
   return result.value as ComicDetail;
 }
 
 async function collectChapter(ctx: SiteCommandContext, target: string): Promise<ChapterData> {
-  await openSitePage(ctx.profile, chapterUrl(target));
+  const page = await openSitePage(ctx.profile, chapterUrl(target));
   await sleep(2500);
   // 滚动触发懒加载
   await evaluateSiteExpression(ctx.profile, `(() => {
@@ -615,7 +615,7 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
         attempts++;
       }, 500);
     });
-  })()`);
+  })()`, page.id);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -736,7 +736,7 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
       nextUrl: links.find(link => link.text === '下一頁')?.href,
       images
     };
-  })()`);
+  })()`, page.id);
   const raw = result.value as Omit<ChapterData, 'imageCount' | 'bodyCandidateCount' | 'filteredImageCount' | 'unknownImageCount' | 'mediaHosts' | 'filteredHosts' | 'unknownHosts'> & { images: Array<Omit<ChapterImageSummary, 'kind'>> };
   const images = raw.images
     .map(image => ({ ...image, pageNumber: image.pageNumber ?? pageNumberFromRoumanUrl(image.url), kind: classifyImageHost(image.host) }))
@@ -759,7 +759,7 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
 }
 
 async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  await openSitePage(ctx.profile, ORIGIN);
+  const page = await openSitePage(ctx.profile, ORIGIN);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => ({
     url: location.href,
@@ -768,7 +768,7 @@ async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
     ageGate: document.body.innerText.includes('您欲觀看的頁面包含成人內容'),
     loginLinks: Array.from(document.querySelectorAll('a[href*="/auth/"]')).map(a => a.href),
     nav: Array.from(document.querySelectorAll('a[href]')).map(a => String(a.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 20)
-  }))()`);
+  }))()`, page.id);
   const value = result.value as { url: string; title: string; language?: string; ageGate?: boolean; loginLinks?: string[]; nav?: string[] };
   const [robots, sitemap] = await Promise.all([
     fetchText(`${ORIGIN}/robots.txt`),

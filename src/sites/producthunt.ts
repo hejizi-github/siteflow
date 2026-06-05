@@ -24,7 +24,7 @@ async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
   links: Array<{ text: string; url: string }>;
   products: Array<{ text: string; url: string }>;
 }> {
-  await openSitePage(ctx.profile, routeUrl(route));
+  const page = await openSitePage(ctx.profile, routeUrl(route));
   await sleep(2500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -48,7 +48,7 @@ async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
       links,
       products
     };
-  })()`);
+  })()`, page.id);
   const value = result.value as {
     url: string;
     title: string;

@@ -36,7 +36,7 @@ async function collectListing(ctx: SiteCommandContext, path: string, limit: numb
   }>;
   moreUrl?: string;
 }> {
-  await openSitePage(ctx.profile, `${ORIGIN}/${path}`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/${path}`);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -64,7 +64,7 @@ async function collectListing(ctx: SiteCommandContext, path: string, limit: numb
     }).filter(item => item.title);
     const more = document.querySelector('a.morelink');
     return { url: location.href, title: document.title, items, moreUrl: more ? abs(more.getAttribute('href') || '') : undefined };
-  })()`);
+  })()`, page.id);
   return result.value as {
     url: string;
     title: string;
@@ -87,7 +87,7 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
   };
   comments: Array<{ user?: string; age?: string; text: string; replyUrl?: string }>;
 }> {
-  await openSitePage(ctx.profile, `${ORIGIN}/item?id=${encodeURIComponent(id)}`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/item?id=${encodeURIComponent(id)}`);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -119,7 +119,7 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
       } : undefined,
       comments
     };
-  })()`);
+  })()`, page.id);
   return result.value as {
     url: string;
     title: string;
@@ -129,7 +129,7 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
 }
 
 async function collectUser(ctx: SiteCommandContext, id: string): Promise<{ url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> }> {
-  await openSitePage(ctx.profile, `${ORIGIN}/user?id=${encodeURIComponent(id)}`);
+  const page = await openSitePage(ctx.profile, `${ORIGIN}/user?id=${encodeURIComponent(id)}`);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -148,7 +148,7 @@ async function collectUser(ctx: SiteCommandContext, id: string): Promise<{ url: 
       .map(a => ({ text: clean(a.textContent), url: abs(a.getAttribute('href') || '') }))
       .filter(link => link.text && !['login', 'Hacker News', 'new', 'past', 'comments', 'ask', 'show', 'jobs', 'submit'].includes(link.text));
     return { url: location.href, title: document.title, profile, links };
-  })()`);
+  })()`, page.id);
   return result.value as { url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> };
 }
 

@@ -68,10 +68,11 @@ export async function navigateSitePage(profile: string, url: string, pageId?: nu
   return daemonNavigatePage(profile, url, pageId);
 }
 
-function parseSitePageId(value: string | undefined): number | undefined {
-  if (value === undefined || value === '') return undefined;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+export function parseSitePageId(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  if (!/^\d+$/.test(value.trim())) return undefined;
+  const parsed = Number(value.trim());
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
   return parsed;
 }
 
@@ -178,7 +179,9 @@ export async function replaySiteRequestWithUrl(
 }
 
 export async function reloadSitePage(profile: string): Promise<PageInfo> {
-  return daemonReloadPage(profile);
+  const page = await daemonReloadPage(profile);
+  setCurrentLeasedPageId(page.id);
+  return page;
 }
 
 export async function sleep(ms: number): Promise<void> {

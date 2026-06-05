@@ -47,7 +47,7 @@ async function runTrending(ctx: SiteCommandContext, options: TrendingOptions): P
         };
       })
     };
-  })()`);
+  })()`, page.pageId);
   return siteReceipt(SITE, 'trending', { pageId: page.pageId, ...(result.value as Record<string, unknown>), limit, sideEffects: [] });
 }
 

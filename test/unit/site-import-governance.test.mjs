@@ -138,6 +138,93 @@ test('every site adapter imports the capabilities facade', () => {
   assert.deepEqual(missing, []);
 });
 
+test('site adapters add browser-kernel page targeting through the capabilities facade', () => {
+  const found = [];
+  const directPageIdOption = /\.option\s*\(\s*['"]--page-id\b/;
+  for (const { relative, source } of adapterSourceFiles()) {
+    if (directPageIdOption.test(source)) {
+      found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
+test('capabilities facade owns browser-kernel page targeting option wiring', () => {
+  const source = fs.readFileSync(path.join(sitesDir, 'capabilities.ts'), 'utf8');
+
+  assert.equal(/export\s+function\s+addSitePageIdOption\b/.test(source), true);
+  assert.equal(/\.option\s*\(\s*['"]--page-id\b/.test(source), true);
+});
+
+test('capabilities facade parses browser-kernel page ids strictly', async () => {
+  const { parseSitePageId } = await import('../../dist/sites/capabilities.js');
+
+  assert.equal(parseSitePageId(undefined), undefined);
+  assert.equal(parseSitePageId(''), undefined);
+  assert.equal(parseSitePageId(' 42 '), 42);
+  assert.equal(parseSitePageId('0'), undefined);
+  assert.equal(parseSitePageId('-1'), undefined);
+  assert.equal(parseSitePageId('12abc'), undefined);
+  assert.equal(parseSitePageId('1.5'), undefined);
+});
+
+test('page-targeted adapters evaluate against the facade-opened browser page', () => {
+  const found = [];
+  const pageOpeners = [
+    { marker: 'const page = await openOrNavigateSitePage', pageId: 'page.pageId' },
+    { marker: 'const page = await openSitePage', pageId: 'page.id' },
+  ];
+  for (const { relative, source } of adapterSourceFiles()) {
+    for (const { marker, pageId } of pageOpeners) {
+      if (!source.includes(marker)) continue;
+      const chunks = source.split(marker).slice(1);
+      for (const chunk of chunks) {
+        const scopedChunk = chunk.split(/\n}\n\n(?:async\s+)?function\s+/)[0];
+        let offset = 0;
+        while (true) {
+          const index = scopedChunk.indexOf('evaluateSiteExpression(ctx.profile,', offset);
+          if (index === -1) break;
+          let depth = 0;
+          let quote = '';
+          let end = scopedChunk.length;
+          for (let cursor = scopedChunk.indexOf('(', index); cursor < scopedChunk.length; cursor += 1) {
+            const char = scopedChunk[cursor];
+            const previous = scopedChunk[cursor - 1];
+            if (quote) {
+              if (char === quote && previous !== '\\') quote = '';
+              continue;
+            }
+            if (char === '"' || char === "'" || char === '`') {
+              quote = char;
+              continue;
+            }
+            if (char === '(') depth += 1;
+            if (char === ')') {
+              depth -= 1;
+              if (depth === 0) {
+                end = cursor + 1;
+                break;
+              }
+            }
+          }
+          const call = scopedChunk.slice(index, end);
+          if (!call.includes(`, ${pageId}`)) {
+            const absoluteIndex = source.indexOf(scopedChunk) + index;
+            const line = source.slice(0, absoluteIndex).split('\n').length;
+            found.push(`${relative}:${line}`);
+          }
+          offset = index + 1;
+        }
+      }
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
 test('migrated youtube flow paths do not call raw page evaluation directly', () => {
   const source = fs.readFileSync(path.join(sitesDir, 'youtube.ts'), 'utf8');
   const migratedFunctions = ['runSearch', 'runComments'];

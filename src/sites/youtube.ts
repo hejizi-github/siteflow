@@ -129,7 +129,7 @@ async function runVideo(ctx: SiteCommandContext, options: TargetOptions): Promis
       },
       text: clean(document.body.innerText).slice(0, 5000)
     };
-  })()`);
+  })()`, page.pageId);
   return siteReceipt(SITE, 'video', { target: options.target, id, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
 }
 
@@ -140,7 +140,7 @@ async function runChannel(ctx: SiteCommandContext, options: TargetOptions): Prom
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
     return { url: location.href, title: document.title, heading: clean(document.querySelector('h1, yt-page-header-renderer h1')?.textContent), text: clean(document.body.innerText).slice(0, 5000) };
-  })()`);
+  })()`, page.pageId);
   return siteReceipt(SITE, 'channel', { target: options.target, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
 }
 
@@ -200,7 +200,7 @@ async function runTranscript(ctx: SiteCommandContext, options: TranscriptOptions
       tracks: tracks.map(t => ({ name: t.name?.simpleText, languageCode: t.languageCode, baseUrl: t.baseUrl })),
       transcriptUnavailableHint: Boolean(unavailableControl),
     };
-  })()`);
+  })()`, page.pageId);
   const data = result.value as { url?: string; title?: string; tracks?: Array<{ name?: string; languageCode?: string; baseUrl?: string }>; transcriptUnavailableHint?: boolean };
   const tracks = data.tracks || [];
   if (!tracks.length) {

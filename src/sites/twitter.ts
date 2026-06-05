@@ -3,10 +3,12 @@ import * as path from 'node:path';
 import type { Command } from 'commander';
 import {
   runSiteCommand,
+  addSitePageIdOption,
   captureSiteScreenshot,
   ensureSitePage,
   evaluateInSitePage,
   listSiteNetwork,
+  openOrNavigateSitePage,
   openSitePage,
   readRecentSiteErrors,
   readSiteNetworkPart,
@@ -23,6 +25,7 @@ const twitterDeps = {
   captureSiteScreenshot,
   ensureSitePage,
   evaluateInSitePage,
+  openOrNavigateSitePage,
   openSitePage,
   readRecentSiteErrors,
   readSiteSnapshot,
@@ -31,11 +34,13 @@ const twitterDeps = {
 
 interface TwitterStatusOptions {
   url?: string;
+  pageId?: string;
   screenshot?: string;
 }
 
 interface TwitterCollectOptions {
   url?: string;
+  pageId?: string;
   limit: string;
   screenshot?: string;
   wait: string;
@@ -46,6 +51,7 @@ interface TwitterCollectOptions {
 
 interface TwitterSearchOptions {
   query: string;
+  pageId?: string;
   limit: string;
   screenshot?: string;
   wait: string;
@@ -73,6 +79,7 @@ interface TwitterApiCaptureOptions {
 
 interface TwitterDetailOptions {
   url: string;
+  pageId?: string;
   out?: string;
   wait: string;
   limit: string;
@@ -81,6 +88,7 @@ interface TwitterDetailOptions {
 
 interface TwitterHomeCheckpointOptions {
   out?: string;
+  pageId?: string;
   wait: string;
   limit: string;
   reload?: boolean;
@@ -109,6 +117,7 @@ interface TwitterProfilePageOptions {
 
 interface TwitterProfileCheckpointOptions {
   handle: string;
+  pageId?: string;
   out?: string;
   wait: string;
   limit: string;
@@ -140,6 +149,7 @@ interface TwitterMediaDownloadOptions {
 
 interface XHomeOptions {
   pages: string;
+  pageId?: string;
   out?: string;
   dir?: string;
   wait: string;
@@ -151,6 +161,7 @@ interface XHomeOptions {
 interface XProfileOptions {
   handle: string;
   pages: string;
+  pageId?: string;
   out?: string;
   dir?: string;
   wait: string;
@@ -161,6 +172,7 @@ interface XProfileOptions {
 
 interface XTweetOptions {
   url: string;
+  pageId?: string;
   out?: string;
   dir?: string;
   wait: string;
@@ -1248,7 +1260,11 @@ async function runMediaDownload(_ctx: SiteCommandContext, options: TwitterMediaD
 
 async function runStatus(ctx: SiteCommandContext, options: TwitterStatusOptions, deps = twitterDeps): Promise<SiteReceipt> {
   const screenshots: string[] = [];
-  await deps.ensureSitePage(ctx.profile, options.url || 'https://x.com/explore', 'x.com');
+  if (options.pageId || options.url) {
+    await deps.openOrNavigateSitePage(ctx.profile, options.url || 'https://x.com/explore', options.pageId);
+  } else {
+    await deps.ensureSitePage(ctx.profile, 'https://x.com/explore', 'x.com');
+  }
   await deps.sleep(3000);
   const shot = await deps.captureSiteScreenshot(ctx.profile, options.screenshot);
   if (shot) screenshots.push(shot);
@@ -1282,8 +1298,8 @@ async function runStatus(ctx: SiteCommandContext, options: TwitterStatusOptions,
 
 async function runCollect(ctx: SiteCommandContext, options: TwitterCollectOptions, deps = twitterDeps): Promise<SiteReceipt> {
   const screenshots: string[] = [];
-  if (options.url) {
-    await deps.openSitePage(ctx.profile, options.url);
+  if (options.url || options.pageId) {
+    await deps.openOrNavigateSitePage(ctx.profile, options.url || 'https://x.com/explore', options.pageId);
   } else {
     await deps.ensureSitePage(ctx.profile, 'https://x.com/explore', 'x.com');
   }
@@ -1342,6 +1358,7 @@ async function runSearch(ctx: SiteCommandContext, options: TwitterSearchOptions)
     scrollPages: options.scrollPages,
     scrollDelay: options.scrollDelay,
     out: options.out,
+    pageId: options.pageId,
   });
 }
 
@@ -1451,7 +1468,7 @@ async function runApiCapture(ctx: SiteCommandContext, options: TwitterApiCapture
 }
 
 async function captureTweetDetail(ctx: SiteCommandContext, options: TwitterDetailOptions): Promise<TweetDetailData> {
-  await openSitePage(ctx.profile, options.url);
+  await openOrNavigateSitePage(ctx.profile, options.url, options.pageId);
   const waitMs = Number.parseInt(options.wait, 10);
   const boundedWaitMs = Number.isFinite(waitMs) ? Math.max(1000, Math.min(waitMs, 30_000)) : 8000;
   await sleep(boundedWaitMs);
@@ -1566,7 +1583,7 @@ async function runDetail(ctx: SiteCommandContext, options: TwitterDetailOptions)
 }
 
 async function captureHomeCheckpoint(ctx: SiteCommandContext, options: TwitterHomeCheckpointOptions): Promise<TwitterHomeCheckpoint> {
-  if (options.open !== false) await openSitePage(ctx.profile, 'https://x.com/home');
+  if (options.open !== false) await openOrNavigateSitePage(ctx.profile, 'https://x.com/home', options.pageId);
   if (options.reload) await reloadSitePage(ctx.profile);
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 6000);
@@ -1834,7 +1851,7 @@ async function runHomePage(ctx: SiteCommandContext, options: TwitterHomePageOpti
 async function captureProfileCheckpoint(ctx: SiteCommandContext, options: TwitterProfileCheckpointOptions): Promise<TwitterProfileCheckpoint> {
   const handle = normalizeHandle(options.handle);
   const profilePath = options.replies ? `${encodeURIComponent(handle)}/with_replies` : encodeURIComponent(handle);
-  await openSitePage(ctx.profile, `https://x.com/${profilePath}`);
+  await openOrNavigateSitePage(ctx.profile, `https://x.com/${profilePath}`, options.pageId);
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 7000);
   const limit = Number.parseInt(options.limit, 10);
@@ -2105,6 +2122,7 @@ async function runXHome(ctx: SiteCommandContext, options: XHomeOptions): Promise
     wait: options.wait,
     limit: '1000',
     reload: options.reload,
+    pageId: options.pageId,
   });
   const pageResults: TimelinePageData[] = [];
   let allTweets = mergeTweets(checkpoint.tweets);
@@ -2190,6 +2208,7 @@ async function runXProfile(ctx: SiteCommandContext, options: XProfileOptions): P
     wait: options.wait,
     limit: '1000',
     replies: options.replies,
+    pageId: options.pageId,
   });
   const pageResults: TimelinePageData[] = [];
   let allTweets = mergeTweets(checkpoint.tweets);
@@ -2276,6 +2295,7 @@ async function runXTweet(ctx: SiteCommandContext, options: XTweetOptions): Promi
     wait: options.wait,
     limit: '1000',
     match: 'TweetDetail|TweetResultByRestId|graphql',
+    pageId: options.pageId,
   });
   const summary = {
     title: 'X tweet',
@@ -2334,6 +2354,7 @@ async function runXDownload(ctx: SiteCommandContext, options: XDownloadOptions):
     wait: options.wait,
     limit: '1000',
     match: 'TweetDetail|TweetResultByRestId|graphql',
+    pageId: options.pageId,
   });
   const selected = detail.media.slice(0, limit);
   const planned = selected.map((media, index) => {
@@ -2510,9 +2531,9 @@ export const twitterAdapter: SiteAdapter = {
       name: 'status',
       description: 'Observe the current or default X page and login state',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--url <url>', 'X/Twitter URL to open before observing')
-          .option('--screenshot <path>', 'save screenshot')
+          .option('--screenshot <path>', 'save screenshot'))
           .action(async function () {
             await runSiteCommand(this, ctx => runStatus(ctx, this.opts<TwitterStatusOptions>()));
           });
@@ -2522,14 +2543,14 @@ export const twitterAdapter: SiteAdapter = {
       name: 'collect',
       description: 'Collect visible tweets, links, and page text from an X/Twitter page',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--url <url>', 'X/Twitter URL to open before collecting')
           .option('--limit <n>', 'maximum visible tweet records', '20')
           .option('--wait <ms>', 'milliseconds to wait for page load', '5000')
           .option('--scroll-pages <n>', 'number of viewport scrolls before final collection', '0')
           .option('--scroll-delay <ms>', 'milliseconds to wait after each scroll', '1500')
           .option('--out <path>', 'write normalized DOM collection JSON')
-          .option('--screenshot <path>', 'save screenshot')
+          .option('--screenshot <path>', 'save screenshot'))
           .action(async function () {
             await runSiteCommand(this, ctx => runCollect(ctx, this.opts<TwitterCollectOptions>()));
           });
@@ -2539,14 +2560,14 @@ export const twitterAdapter: SiteAdapter = {
       name: 'search',
       description: 'Open X search and collect visible result tweets',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--query <text>', 'search query')
           .option('--limit <n>', 'maximum visible tweet records', '20')
           .option('--wait <ms>', 'milliseconds to wait for page load', '7000')
           .option('--scroll-pages <n>', 'number of viewport scrolls before final collection', '0')
           .option('--scroll-delay <ms>', 'milliseconds to wait after each scroll', '1500')
           .option('--out <path>', 'write normalized DOM collection JSON')
-          .option('--screenshot <path>', 'save screenshot')
+          .option('--screenshot <path>', 'save screenshot'))
           .action(async function () {
             await runSiteCommand(this, ctx => runSearch(ctx, this.opts<TwitterSearchOptions>()));
           });
@@ -2569,12 +2590,12 @@ export const twitterAdapter: SiteAdapter = {
       name: 'detail',
       description: 'Open one X/Twitter status URL and capture TweetDetail GraphQL data',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--url <url>', 'X/Twitter status URL to open before capturing details')
           .option('--wait <ms>', 'milliseconds to wait after opening the detail page', '8000')
           .option('--limit <n>', 'network entries to scan after opening the detail page', '1000')
           .option('--match <regex>', 'network URL regex to scan', 'TweetDetail|TweetResultByRestId|graphql')
-          .option('--out <path>', 'write normalized detail capture JSON')
+          .option('--out <path>', 'write normalized detail capture JSON'))
           .action(async function () {
             await runSiteCommand(this, ctx => runDetail(ctx, this.opts<TwitterDetailOptions>()));
           });
@@ -2584,12 +2605,12 @@ export const twitterAdapter: SiteAdapter = {
       name: 'home-checkpoint',
       description: 'Capture the latest HomeTimeline tweets and cursors as a recommendation checkpoint',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--out <path>', 'write checkpoint JSON')
           .option('--wait <ms>', 'milliseconds to wait after opening/reloading home', '6000')
           .option('--limit <n>', 'network entries to scan', '1000')
           .option('--reload', 'reload the selected home page before checkpointing')
-          .option('--no-open', 'do not open https://x.com/home before scanning network')
+          .option('--no-open', 'do not open https://x.com/home before scanning network'))
           .action(async function () {
             await runSiteCommand(this, ctx => runHomeCheckpoint(ctx, this.opts<TwitterHomeCheckpointOptions>()));
           });
@@ -2599,13 +2620,13 @@ export const twitterAdapter: SiteAdapter = {
       name: 'home-diff',
       description: 'Refresh HomeTimeline and diff it against a previous recommendation checkpoint',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--before <path>', 'previous home-checkpoint JSON')
           .option('--out <path>', 'write diff JSON')
           .option('--wait <ms>', 'milliseconds to wait after opening/reloading home', '6000')
           .option('--limit <n>', 'network entries to scan', '1000')
           .option('--reload', 'reload the selected home page before diffing')
-          .option('--no-open', 'do not open https://x.com/home before scanning network')
+          .option('--no-open', 'do not open https://x.com/home before scanning network'))
           .action(async function () {
             await runSiteCommand(this, ctx => runHomeDiff(ctx, this.opts<TwitterHomeDiffOptions>()));
           });
@@ -2630,12 +2651,12 @@ export const twitterAdapter: SiteAdapter = {
       name: 'profile-checkpoint',
       description: 'Capture the latest tweets from one X profile as a monitoring checkpoint',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--handle <handle>', 'X handle, with or without @')
           .option('--out <path>', 'write checkpoint JSON')
           .option('--wait <ms>', 'milliseconds to wait after opening the profile', '7000')
           .option('--limit <n>', 'network entries to scan', '1000')
-          .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets')
+          .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets'))
           .action(async function () {
             await runSiteCommand(this, ctx => runProfileCheckpoint(ctx, this.opts<TwitterProfileCheckpointOptions>()));
           });
@@ -2660,13 +2681,13 @@ export const twitterAdapter: SiteAdapter = {
       name: 'profile-diff',
       description: 'Capture one X profile and diff it against a previous profile checkpoint',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--handle <handle>', 'X handle, with or without @')
           .requiredOption('--before <path>', 'previous profile-checkpoint JSON')
           .option('--out <path>', 'write diff JSON')
           .option('--wait <ms>', 'milliseconds to wait after opening the profile', '7000')
           .option('--limit <n>', 'network entries to scan', '1000')
-          .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets')
+          .option('--replies', 'capture UserTweetsAndReplies instead of UserTweets'))
           .action(async function () {
             await runSiteCommand(this, ctx => runProfileDiff(ctx, this.opts<TwitterProfileDiffOptions>()));
           });
@@ -2733,14 +2754,14 @@ export const xAdapter: SiteAdapter = {
       name: 'home',
       description: 'Collect your X Home timeline; use --pages to continue downward',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--pages <n>', 'number of pages to collect, capped at 5', '1')
           .option('--out <path>', 'write full JSON result')
           .option('--dir <path>', 'directory for auto-named output files')
           .option('--wait <ms>', 'milliseconds to wait for Home to load', '7000')
           .option('--page-delay-ms <ms>', 'delay between cursor page requests', '3000')
           .option('--count <n>', 'requested item count per cursor page, capped at 40', '20')
-          .option('--reload', 'reload Home before capturing the timeline')
+          .option('--reload', 'reload Home before capturing the timeline'))
           .action(async function () {
             await runSiteCommand(this, ctx => runXHome(ctx, this.opts<XHomeOptions>()));
           });
@@ -2750,7 +2771,7 @@ export const xAdapter: SiteAdapter = {
       name: 'profile',
       description: 'Collect one X profile; use --pages to continue downward',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<handle>', 'X handle, with or without @')
           .option('--pages <n>', 'number of pages to collect, capped at 5', '1')
           .option('--replies', 'include replies tab')
@@ -2758,7 +2779,7 @@ export const xAdapter: SiteAdapter = {
           .option('--dir <path>', 'directory for auto-named output files')
           .option('--wait <ms>', 'milliseconds to wait for the profile to load', '8000')
           .option('--page-delay-ms <ms>', 'delay between cursor page requests', '3000')
-          .option('--count <n>', 'requested item count per cursor page, capped at 40', '20')
+          .option('--count <n>', 'requested item count per cursor page, capped at 40', '20'))
           .action(async function (handle: string) {
             await runSiteCommand(this, ctx => runXProfile(ctx, { ...this.opts<Omit<XProfileOptions, 'handle'>>(), handle }));
           });
@@ -2768,11 +2789,11 @@ export const xAdapter: SiteAdapter = {
       name: 'tweet',
       description: 'Collect one X tweet detail, replies, and media metadata',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<url>', 'X status URL')
           .option('--out <path>', 'write full JSON result')
           .option('--dir <path>', 'directory for auto-named output files')
-          .option('--wait <ms>', 'milliseconds to wait for the tweet page to load', '9000')
+          .option('--wait <ms>', 'milliseconds to wait for the tweet page to load', '9000'))
           .action(async function (url: string) {
             await runSiteCommand(this, ctx => runXTweet(ctx, { ...this.opts<Omit<XTweetOptions, 'url'>>(), url }));
           });
@@ -2782,7 +2803,7 @@ export const xAdapter: SiteAdapter = {
       name: 'download',
       description: 'Find media on one X tweet and download it with --apply',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<url>', 'X status URL')
           .option('--apply', 'actually download files; without this the command only plans')
           .option('--out <path>', 'write full JSON result')
@@ -2791,7 +2812,7 @@ export const xAdapter: SiteAdapter = {
           .option('--wait <ms>', 'milliseconds to wait for the tweet page to load', '9000')
           .option('--prefer <kind>', 'video selection preference: mp4, hls, or preview', 'mp4')
           .option('--limit <n>', 'maximum media items to consider', '20')
-          .option('--max-bytes <n>', 'maximum bytes per downloaded file', '200000000')
+          .option('--max-bytes <n>', 'maximum bytes per downloaded file', '200000000'))
           .action(async function (url: string) {
             await runSiteCommand(this, ctx => runXDownload(ctx, { ...this.opts<Omit<XDownloadOptions, 'url'>>(), url }));
           });
