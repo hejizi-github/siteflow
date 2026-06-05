@@ -233,7 +233,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       if (event.key === 'Enter' && (event.control === 'textarea' || event.control === 'contenteditable')) {
         continue;
       }
-      if (event.key === 'Enter' && event.target && hasReplayableTypeTarget(event.target)) {
+      if (event.key === 'Enter' && event.control === 'input' && event.target && hasReplayableTypeTarget(event.target)) {
         steps.push({
           id: nextStepId(steps),
           type: 'type',
@@ -242,7 +242,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           clear: false,
           pressEnter: true,
         });
-      } else if (event.key === 'Enter') {
+      } else {
         unsupportedEvents += 1;
       }
     }
@@ -291,13 +291,20 @@ export function recorderInjectionSource(): string {
   }
 
   function normalizedText(value) {
-    return (value || '').trim().replace(/\s+/g, ' ');
+    return (value || '').trim().replace(/\\s+/g, ' ');
   }
 
   function selectedOptionTextFor(element) {
     return element instanceof HTMLSelectElement && element.selectedOptions.length > 0
       ? normalizedText(element.selectedOptions[0].innerText || element.selectedOptions[0].textContent || '').slice(0, 120) || undefined
       : undefined;
+  }
+
+  function actionInputTextFor(element) {
+    if (!(element instanceof HTMLInputElement)) return undefined;
+    const type = (element.getAttribute('type') || element.type || 'submit').toLowerCase();
+    if (type !== 'submit' && type !== 'button' && type !== 'reset') return undefined;
+    return normalizedText(element.value || element.getAttribute('value') || '').slice(0, 120) || undefined;
   }
 
   function contenteditableValueFor(element) {
@@ -363,7 +370,7 @@ export function recorderInjectionSource(): string {
     const rect = element.getBoundingClientRect();
     const selector = selectorFor(element);
     const selectedOptionText = control === 'select' && !selector ? selectedOptionTextFor(element) : undefined;
-    const text = control ? selectedOptionText : normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
+    const text = control ? selectedOptionText : actionInputTextFor(element) || normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
     return {

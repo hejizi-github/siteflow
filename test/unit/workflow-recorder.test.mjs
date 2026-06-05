@@ -757,6 +757,29 @@ test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
   ]);
 });
 
+test('input submit value is recorded as mutating click evidence', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'submit',
+    value: 'save changes',
+    getAttribute: (name) => (name === 'type' ? 'submit' : undefined),
+  });
+  Object.setPrototypeOf(input, FakeInputElement.prototype);
+
+  const event = await recordFixtureEvent(input, 'click');
+
+  assert.equal(event.target.semantic.text, 'save changes');
+  assert.deepEqual(normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  }), [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target: event.target, mutating: true },
+  ]);
+});
+
 test('normalizeRecordedEvents converts select change events to select steps', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const target = {
@@ -1232,6 +1255,90 @@ test('geometry-only Enter keydown is unsupported and not normalized to type', as
     });
 
     assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('selector-backed non-input Enter keydown is counted unsupported', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-button-enter-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { text: 'Submit' },
+      structural: { selector: 'button[type="submit"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-button-enter-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          key: 'Enter',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('Tab and Escape keydowns are counted unsupported when not replayed', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-keydown-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Search' },
+      structural: { selector: 'input[name="q"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-keydown-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Tab',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Escape',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 2);
     assert.deepEqual(result.workflow.steps, [
       { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     ]);
