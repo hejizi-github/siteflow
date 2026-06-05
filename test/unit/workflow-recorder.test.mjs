@@ -1120,6 +1120,105 @@ test('recorded checkbox radio and file input changes become unsupported events',
   }
 });
 
+test('unsupported checkbox radio and file input clicks become unsupported events', async () => {
+  for (const type of ['checkbox', 'radio', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type,
+      value: type === 'file' ? '/tmp/private.txt' : 'on',
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'name') return `${type}-control`;
+        return undefined;
+      },
+    }));
+
+    const payloads = await recordFixturePayloads(input, 'click');
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+  }
+});
+
+test('unsupported event removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      structural: { selector: 'input[type="checkbox"]' },
+      geometry: { x: 50, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('recorder injection exposes synchronous scroll flush function', async () => {
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const source = recorderInjectionSource();
+  assert.match(source, /window\.__siteflowFlushRecorder\s*=/);
+  assert.match(source, /clearTimeout\(scrollTimer\)/);
+});
+
+test('stopRecorderSession flushes pending page scroll before serializing', async () => {
+  const { startRecorderSession, stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-flush-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const pendingScroll = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/start',
+      title: 'Start',
+    };
+    const page = {
+      binding: undefined,
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
+      async addInitScript() {},
+      async evaluate(arg) {
+        if (typeof arg === 'function') await this.binding({}, pendingScroll);
+      },
+      url() {
+        return 'https://example.test/start';
+      },
+    };
+
+    const session = await startRecorderSession(page, 1, { out });
+    const result = await stopRecorderSession(session);
+
+    assert.equal(result.unsupportedEvents, 0);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/start' },
+      { id: 'step-2', type: 'scroll', deltaX: 0, deltaY: 240 },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('unsupported checkbox radio and file events count unsupported on stop', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-unsupported-controls-'));

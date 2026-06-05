@@ -90,6 +90,10 @@ function hasSameStructuralSelector(left: RecordedTarget | undefined, right: Reco
   return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
 }
 
+function hasSameRecordedTarget(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
+  return hasSameStructuralSelector(left, right) || hasSameGeometry(left, right);
+}
+
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -221,6 +225,10 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
     }
 
     if (event.type === 'unsupported') {
+      const previousStep = steps[steps.length - 1];
+      if (previousStep?.type === 'click' && event.target && hasSameRecordedTarget(previousStep.target, event.target)) {
+        steps.pop();
+      }
       unsupportedEvents += 1;
       continue;
     }
@@ -356,7 +364,9 @@ export function recorderInjectionSource(): string {
     }
     if (element instanceof HTMLTextAreaElement) return { element, control: 'textarea', sensitive: isSensitiveControl(element) };
     if (element instanceof HTMLInputElement) {
-      if (!isTextLikeInput(element)) return { element, unsupported: true, sensitive: isSensitiveControl(element) };
+      const type = (element.getAttribute('type') || element.type || 'text').toLowerCase();
+      if (!isTextLikeInput(element) && type !== 'submit' && type !== 'button' && type !== 'reset') return { element, unsupported: true, sensitive: isSensitiveControl(element) };
+      if (!isTextLikeInput(element)) return { element, sensitive: isSensitiveControl(element) };
       return { element, control: 'input', sensitive: isSensitiveControl(element) };
     }
     const editable = editableAncestorFor(element);
@@ -403,14 +413,16 @@ export function recorderInjectionSource(): string {
   }
 
   function record(payload) {
-    if (!payload || typeof payload.type !== 'string') return;
+    if (!payload || typeof payload.type !== 'string') return undefined;
     if (typeof window.__siteflowRecordEvent === 'function') {
-      window.__siteflowRecordEvent(payload).catch(() => {});
+      return window.__siteflowRecordEvent(payload).catch(() => {});
     }
+    return undefined;
   }
 
   document.addEventListener('click', (event) => {
-    record(basePayload('click', targetFor(event.target)));
+    const info = controlInfoFor(event.target);
+    record(basePayload(info.unsupported ? 'unsupported' : 'click', targetFor(info.element || event.target)));
   }, true);
 
   function recordValueEvent(event) {
@@ -451,6 +463,21 @@ export function recorderInjectionSource(): string {
     });
   }, true);
 
+
+  function flushPendingScroll() {
+    if (scrollTimer === undefined) return undefined;
+    window.clearTimeout(scrollTimer);
+    scrollTimer = undefined;
+    const deltaX = scrollDeltaX;
+    const deltaY = scrollDeltaY;
+    scrollDeltaX = 0;
+    scrollDeltaY = 0;
+    if (deltaX === 0 && deltaY === 0) return undefined;
+    return record({ ...basePayload('scroll'), deltaX, deltaY });
+  }
+
+  window.__siteflowFlushRecorder = flushPendingScroll;
+
   window.addEventListener('scroll', () => {
     const nextX = window.scrollX;
     const nextY = window.scrollY;
@@ -460,10 +487,7 @@ export function recorderInjectionSource(): string {
     lastScrollY = nextY;
     if (scrollTimer !== undefined) window.clearTimeout(scrollTimer);
     scrollTimer = window.setTimeout(() => {
-      record({ ...basePayload('scroll'), deltaX: scrollDeltaX, deltaY: scrollDeltaY });
-      scrollDeltaX = 0;
-      scrollDeltaY = 0;
-      scrollTimer = undefined;
+      flushPendingScroll();
     }, 150);
   }, { passive: true });
 })();`;
@@ -522,8 +546,15 @@ export function recorderStatus(session: RecorderSession | null): RecorderStatus 
 }
 
 export async function stopRecorderSession(session: RecorderSession): Promise<RecorderStopResult> {
-  stoppedSessions.add(session);
   const page = recorderSessionPages.get(session);
+  if (page && activeRecorderSessions.get(page) === session) {
+    try {
+      await page.evaluate(() => (globalThis.window as typeof globalThis.window & { __siteflowFlushRecorder?: () => unknown }).__siteflowFlushRecorder?.());
+    } catch {
+      // The page may already be closed or navigated away; stopping should still serialize captured events.
+    }
+  }
+  stoppedSessions.add(session);
   if (page && activeRecorderSessions.get(page) === session) activeRecorderSessions.set(page, null);
   recorderSessionPages.delete(session);
   const normalized = normalizeRecordedEventsWithStats({ startUrl: session.startUrl, events: session.events });
