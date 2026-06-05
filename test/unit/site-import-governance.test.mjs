@@ -11,6 +11,7 @@ const allowedDirectClientImports = new Set([
 ]);
 const supportModules = new Set([
   'src/sites/capabilities.ts',
+  'src/sites/flow/define-flow.ts',
   'src/sites/helpers.ts',
   'src/sites/http-utils.ts',
   'src/sites/registry.ts',
@@ -19,13 +20,21 @@ const supportModules = new Set([
 ]);
 
 function siteSourceFiles() {
-  return fs.readdirSync(sitesDir)
-    .filter(entry => entry.endsWith('.ts'))
-    .map(entry => {
-      const fullPath = path.join(sitesDir, entry);
+  const files = [];
+  function visit(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(fullPath);
+        continue;
+      }
+      if (!entry.name.endsWith('.ts')) continue;
       const relative = path.relative(repoRoot, fullPath).replace(/\\/g, '/');
-      return { fullPath, relative, source: fs.readFileSync(fullPath, 'utf8') };
-    });
+      files.push({ fullPath, relative, source: fs.readFileSync(fullPath, 'utf8') });
+    }
+  }
+  visit(sitesDir);
+  return files;
 }
 
 function adapterSourceFiles() {
