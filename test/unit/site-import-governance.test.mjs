@@ -44,6 +44,37 @@ function adapterSourceFiles() {
   return siteSourceFiles().filter(file => !supportModules.has(file.relative));
 }
 
+function functionSource(source, name) {
+  const declaration = new RegExp(`async\\s+function\\s+${name}\\b`);
+  const match = declaration.exec(source);
+  if (!match) return undefined;
+
+  const bodyStart = source.indexOf('{', match.index);
+  if (bodyStart === -1) return undefined;
+
+  let depth = 0;
+  let quote = '';
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    const previous = source[index - 1];
+    if (quote) {
+      if (char === quote && previous !== '\\') quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(match.index, index + 1);
+    }
+  }
+
+  return undefined;
+}
+
 test('direct daemon client imports stay within the explicit allowlist', () => {
   const found = [];
   for (const { relative, source } of siteSourceFiles()) {
@@ -105,6 +136,18 @@ test('every site adapter imports the capabilities facade', () => {
 
   missing.sort();
   assert.deepEqual(missing, []);
+});
+
+test('migrated youtube flow paths do not call raw page evaluation directly', () => {
+  const source = fs.readFileSync(path.join(sitesDir, 'youtube.ts'), 'utf8');
+  const migratedFunctions = ['runSearch', 'runComments'];
+
+  for (const name of migratedFunctions) {
+    const scopedSource = functionSource(source, name);
+    assert.notEqual(scopedSource, undefined, `${name} should exist`);
+    assert.equal(scopedSource.includes('evaluateSiteExpression'), false, `${name} should use probes instead of evaluateSiteExpression`);
+    assert.equal(scopedSource.includes('evaluateInSitePage'), false, `${name} should use probes instead of evaluateInSitePage`);
+  }
 });
 
 test('site-facing modules take site-facing types from the capabilities facade', () => {
