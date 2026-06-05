@@ -1,9 +1,12 @@
 import type { SiteCommandContext, SiteReceipt, SiteStepReceipt } from '../capabilities.js';
 
 export type FlowStepEvidence = Record<string, unknown>;
+const flowEvidenceMarker = Symbol('siteflow.flowEvidence');
+
 export interface FlowEvidenceValue<T> {
   value: T;
   evidence: FlowStepEvidence;
+  [flowEvidenceMarker]: true;
 }
 
 export type SiteFlowStepResult<T> = T | FlowEvidenceValue<T>;
@@ -88,6 +91,7 @@ export function flowEvidence<T>(value: T, evidence?: FlowStepEvidence): FlowEvid
   return {
     value,
     evidence: evidence ?? toStepEvidence(value),
+    [flowEvidenceMarker]: true,
   };
 }
 
@@ -101,8 +105,7 @@ export function withFlowSteps(receipt: SiteReceipt, steps: SiteStepReceipt[]): S
 function isFlowEvidenceValue(value: unknown): value is FlowEvidenceValue<unknown> {
   return value !== null
     && typeof value === 'object'
-    && 'value' in value
-    && 'evidence' in value;
+    && (value as { [flowEvidenceMarker]?: unknown })[flowEvidenceMarker] === true;
 }
 
 function unwrapStepResult(value: unknown): { value: unknown; evidence?: FlowStepEvidence } {

@@ -41,6 +41,7 @@ test('site flow records successful sequential steps', async () => {
 test('site flow omits evidence for raw step values', async () => {
   const receipt = await defineSiteFlow(ctx, 'youtube', 'search')
     .step('read_page_text', async () => ({ text: 'private user text', token: 'raw-secret' }))
+    .step('read_structural_evidence_shape', async () => ({ value: 'raw-secret', evidence: { secret: 'leak' } }))
     .receipt(flow => ({
       site: 'youtube',
       command: 'search',
@@ -55,7 +56,9 @@ test('site flow omits evidence for raw step values', async () => {
 
   assert.equal(receipt.observations.text, 'private user text');
   assert.equal('evidence' in receipt.steps[0], false);
+  assert.equal('evidence' in receipt.steps[1], false);
   assert.equal(JSON.stringify(receipt.steps[0]).includes('raw-secret'), false);
+  assert.equal(JSON.stringify(receipt.steps[1]).includes('leak'), false);
 });
 
 test('site flow records failed steps before rethrowing', async () => {
