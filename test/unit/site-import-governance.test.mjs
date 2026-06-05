@@ -14,6 +14,7 @@ const supportModules = new Set([
   'src/sites/flow/define-flow.ts',
   'src/sites/helpers.ts',
   'src/sites/http-utils.ts',
+  'src/sites/probes/selector-runtime.ts',
   'src/sites/registry.ts',
   'src/sites/runner.ts',
   'src/sites/types.ts',
