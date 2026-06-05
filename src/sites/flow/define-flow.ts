@@ -72,7 +72,7 @@ export class SiteFlowRunner {
           endedAt: new Date().toISOString(),
           error: {
             code: 'SITE_FLOW_STEP_FAILED',
-            message: error instanceof Error ? error.message : String(error),
+            message: 'Step failed before completing.',
           },
         });
         throw error;

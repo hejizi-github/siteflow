@@ -91,7 +91,7 @@ test('site flow records failed steps before rethrowing', async () => {
   assert.equal(failedStep.state, 'extract_comments_failed');
   assert.deepEqual(failedStep.error, {
     code: 'SITE_FLOW_STEP_FAILED',
-    message: 'comments unavailable',
+    message: 'Step failed before completing.',
   });
 });
 
