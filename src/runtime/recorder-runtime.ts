@@ -86,6 +86,18 @@ function hasSameSelectTarget(left: RecordedTarget | undefined, right: RecordedTa
   return hasSameStructuralSelector(left, right) || (!left?.structural?.selector && !right.structural?.selector && hasSameGeometry(left, right));
 }
 
+function selectTargetForReplay(target: RecordedTarget): RecordedTarget | undefined {
+  const nth = target.structural?.nth;
+  if (typeof nth === 'number' && nth > 0) return undefined;
+  if (nth !== 0) return target;
+  const { nth: _nth, ...structural } = target.structural ?? {};
+  return {
+    ...target,
+    structural,
+  };
+}
+
+
 function hasSameStructuralSelector(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
   return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
 }
@@ -133,7 +145,19 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           lastSelectStep = undefined;
           continue;
         }
-        const key = targetKey(event.target);
+        const replayTarget = selectTargetForReplay(event.target);
+        if (!replayTarget) {
+          if (previousSelectClickStep?.type === 'click' && hasSameSelectTarget(previousSelectClickStep.target, event.target)) {
+            steps.pop();
+          }
+          unsupportedEvents += 1;
+          lastInputTargetKey = undefined;
+          lastInputStep = undefined;
+          lastSelectTargetKey = undefined;
+          lastSelectStep = undefined;
+          continue;
+        }
+        const key = targetKey(replayTarget);
         if (previousSelectClickStep?.type === 'click' && hasSameSelectTarget(previousSelectClickStep.target, event.target)) {
           steps.pop();
         }
@@ -144,7 +168,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           const step: Extract<WorkflowStep, { type: 'select' }> = {
             id: nextStepId(steps),
             type: 'select',
-            target: event.target,
+            target: replayTarget,
             option,
           };
           steps.push(step);
@@ -421,7 +445,7 @@ export function recorderInjectionSource(): string {
         semantic: {},
         structural: {
           selector,
-          ...(nth !== undefined ? { nth } : {}),
+          ...(nth !== undefined && nth > 0 ? { nth } : {}),
         },
         geometry: {
           x: rect.left + rect.width / 2,

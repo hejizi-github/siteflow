@@ -808,7 +808,7 @@ test('input submit with stable selector records selector target without semantic
 
   assert.equal(event.target.semantic.text, undefined);
   assert.equal(event.target.structural.selector, 'input[type="submit"]');
-  assert.equal(event.target.structural.nth, 0);
+  assert.equal(event.target.structural.nth, undefined);
   assert.equal(event.mutating, true);
   assert.deepEqual(normalizeRecordedEvents({
     startUrl: 'https://example.test/form',
@@ -899,7 +899,7 @@ test('recorded selector target omits semantic fields that override replay select
 
   assert.equal(Object.keys(event.target.semantic).length, 0);
   assert.equal(event.target.structural.selector, '#submit');
-  assert.equal(event.target.structural.nth, 0);
+  assert.equal(event.target.structural.nth, undefined);
 });
 
 test('startRecorderSession reuses page binding and routes events to active session', async () => {
@@ -1057,6 +1057,70 @@ test('recorded select with stable selector omits semantic selected option text',
   assert.deepEqual(steps, [
     { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
+  ]);
+});
+
+test('normalizeRecordedEvents omits zero nth from selector-backed select steps', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]', nth: 0 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'select',
+      target: { semantic: { label: 'Country' }, structural: { selector: 'select[name="country"]' }, confidence: 'high' },
+      option: 'Canada',
+    },
+  ]);
+});
+
+test('normalizeRecordedEvents skips duplicate selector-backed selects with nth greater than zero', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]', nth: 1 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
   ]);
 });
 
