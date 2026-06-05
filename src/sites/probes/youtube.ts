@@ -3,6 +3,7 @@ import { extractList, href, text, type ExtractListResult, type ProbePage } from 
 
 const youtubeSearchRoot = 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title';
 const youtubeCommentsRoot = 'ytd-comment-thread-renderer';
+const youtubeVideoIdPattern = /^[\w-]{6,}$/;
 
 export interface YouTubeProbeOptions {
   limit: number;
@@ -87,12 +88,24 @@ export async function youtubeScrollToComments(page: ProbePage): Promise<Record<s
 function videoIdFromHref(value: string): string | undefined {
   try {
     const url = new URL(value, 'https://www.youtube.com');
-    if (url.hostname === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0];
-    const id = url.searchParams.get('v');
-    return id || undefined;
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    if (url.hostname === 'youtu.be') return validVideoId(url.pathname.split('/').filter(Boolean)[0]);
+    if (!isYouTubeHost(url.hostname)) return undefined;
+    return validVideoId(url.searchParams.get('v') ?? undefined);
   } catch {
     return undefined;
   }
+}
+
+function isYouTubeHost(hostname: string): boolean {
+  return hostname === 'youtube.com'
+    || hostname === 'www.youtube.com'
+    || hostname === 'm.youtube.com'
+    || hostname.endsWith('.youtube.com');
+}
+
+function validVideoId(value: string | undefined): string | undefined {
+  return value && youtubeVideoIdPattern.test(value) ? value : undefined;
 }
 
 function stringValue(value: unknown): string {

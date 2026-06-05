@@ -156,6 +156,27 @@ test('createExtractListExpression requires own fields only', () => {
   assert.deepEqual(result, { rows: [], count: 0 });
 });
 
+test('createExtractListExpression can read fields from the root itself', () => {
+  const expression = createExtractListExpression({
+    root: 'a#video-title',
+    limit: 1,
+    required: ['href'],
+    fields: {
+      title: text('a#video-title'),
+      href: href('a#video-title'),
+    },
+  });
+  const document = fakeDocument([
+    fakeNode('Root Video', { href: 'https://www.youtube.com/watch?v=abc123' }, 'a#video-title'),
+  ]);
+
+  const result = Function('document', `return ${expression}`)(document);
+
+  assert.deepEqual(result.rows.map(row => ({ ...row })), [
+    { title: 'Root Video', href: 'https://www.youtube.com/watch?v=abc123' },
+  ]);
+});
+
 test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
   const result = await youtubeSearchResults({
     profile: 'default',
@@ -180,6 +201,23 @@ test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
     root: 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title',
   });
   assert.equal(JSON.stringify(result.evidence).includes('First'), false);
+});
+
+test('youtubeSearchResults rejects non-youtube and unsafe video hrefs', async () => {
+  const result = await youtubeSearchResults({
+    profile: 'default',
+    evaluate: async () => ({ value: {
+      rows: [
+        { title: 'Good watch', href: 'https://www.youtube.com/watch?v=abc123', channel: '', metadata: '' },
+        { title: 'Good short', href: 'https://youtu.be/def456', channel: '', metadata: '' },
+        { title: 'Bad host', href: 'https://evil.example/watch?v=bad123', channel: '', metadata: '' },
+        { title: 'Bad scheme', href: 'javascript:alert(1)?v=script123', channel: '', metadata: '' },
+      ],
+      count: 4,
+    } }),
+  }, { limit: 5 });
+
+  assert.deepEqual(result.videos.map(video => video.id), ['abc123', 'def456']);
 });
 
 test('youtubeComments returns visible comments and small evidence', async () => {
@@ -232,12 +270,13 @@ test('youtubeScrollToComments runs page scroll probe with small evidence', async
 function fakeDocument(roots) {
   return {
     querySelectorAll(selector) {
-      return selector === '.result' ? roots.map(fakeRoot) : [];
+      return selector === '.result' || selector === 'a#video-title' ? roots.map(fakeRoot) : [];
     },
   };
 }
 
 function fakeRoot(fields) {
+  if (typeof fields.matches === 'function') return fields;
   return {
     querySelector(selector) {
       return fields[selector] ?? null;
@@ -245,10 +284,16 @@ function fakeRoot(fields) {
   };
 }
 
-function fakeNode(textContent, attributes = {}) {
+function fakeNode(textContent, attributes = {}, selector) {
   return {
     textContent,
     href: attributes.href,
+    matches(candidate) {
+      return selector === candidate;
+    },
+    querySelector(candidate) {
+      return selector === candidate ? this : null;
+    },
     getAttribute(attribute) {
       return attributes[attribute] ?? '';
     },

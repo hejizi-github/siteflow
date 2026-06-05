@@ -66,7 +66,9 @@ export function createExtractListExpression(spec: ExtractListSpec): string {
   const limit = Math.min(${normalized.limit}, roots.length);
   if (limit <= 0) return { rows: [], count: 0 };
   const readField = (root, field) => {
-    const node = root.querySelector(field.selector);
+    const node = typeof root.matches === 'function' && root.matches(field.selector)
+      ? root
+      : root.querySelector(field.selector);
     if (!node) return '';
     if (field.kind === 'attr') {
       if (field.attribute === 'href' && 'href' in node) return String(node.href || '');
