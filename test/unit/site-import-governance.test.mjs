@@ -227,7 +227,7 @@ test('page-targeted adapters evaluate against the facade-opened browser page', (
 
 test('migrated youtube flow paths do not call raw page evaluation directly', () => {
   const source = fs.readFileSync(path.join(sitesDir, 'youtube.ts'), 'utf8');
-  const migratedFunctions = ['runSearch', 'runComments'];
+  const migratedFunctions = ['runSearch', 'runVideo', 'runComments'];
 
   for (const name of migratedFunctions) {
     const scopedSource = functionSource(source, name);

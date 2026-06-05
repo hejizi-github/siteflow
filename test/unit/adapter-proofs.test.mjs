@@ -172,3 +172,41 @@ test('youtube comments proof returns step trace through injected deps', async ()
   assert.equal(stepTrace.includes('Watch'), false);
   assert.equal(stepTrace.includes('Visible comment'), false);
 });
+
+test('youtube video proof returns step trace through injected deps', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 5, url: 'https://www.youtube.com/watch?v=abc123XYZ_1', title: 'Watch' }),
+    sleep: async () => {},
+    youtubeVideoDetails: async () => ({
+      details: {
+        url: 'https://www.youtube.com/watch?v=abc123XYZ_1',
+        title: 'Watch',
+        video: {
+          id: 'abc123XYZ_1',
+          title: 'Proof video',
+          channel: 'Proof channel',
+        },
+        text: 'Visible watch page text',
+      },
+      evidence: {
+        pageId: 5,
+        hasVideoId: true,
+      },
+    }),
+  };
+
+  const receipt = await youtubeTesting.runVideo({ profile: 'default' }, { target: 'abc123XYZ_1' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'video');
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.title, 'Watch');
+  assert.equal(receipt.observations.video.title, 'Proof video');
+  assert.equal(receipt.observations.text, 'Visible watch page text');
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_video_page', 'wait_for_watch_page', 'extract_video_details']);
+  const stepTrace = JSON.stringify(receipt.steps);
+  assert.equal(stepTrace.includes('Watch'), false);
+  assert.equal(stepTrace.includes('Proof video'), false);
+  assert.equal(stepTrace.includes('Visible watch page text'), false);
+});

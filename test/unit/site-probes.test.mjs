@@ -11,6 +11,7 @@ import {
 import {
   youtubeComments,
   youtubeScrollToComments,
+  youtubeVideoDetails,
   youtubeSearchResults,
 } from '../../dist/sites/probes/youtube.js';
 
@@ -310,6 +311,72 @@ test('youtubeComments returns visible comments and small evidence', async () => 
     root: 'ytd-comment-thread-renderer',
   });
   assert.equal(JSON.stringify(result.evidence).includes('Useful comment'), false);
+});
+
+test('youtubeVideoDetails evaluates watch page metadata with small evidence', async () => {
+  const calls = [];
+  const details = {
+    url: 'https://www.youtube.com/watch?v=abc123XYZ_1',
+    title: 'Watch title',
+    video: {
+      id: 'abc123XYZ_1',
+      title: 'Proof video',
+      channel: 'Proof channel',
+      description: 'Proof description',
+      lengthSeconds: '120',
+      viewCount: '42',
+      publishDate: '2026-06-01',
+      category: 'Education',
+    },
+    text: 'Visible watch page text',
+  };
+  const result = await youtubeVideoDetails({
+    profile: 'default',
+    pageId: 8,
+    evaluate: async (profile, expression, pageId) => {
+      calls.push({ profile, expression, pageId });
+      return { value: details };
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].profile, 'default');
+  assert.equal(calls[0].pageId, 8);
+  assert.equal(calls[0].expression.includes('ytInitialPlayerResponse'), true);
+  assert.deepEqual(result.details, details);
+  assert.deepEqual(result.evidence, {
+    pageId: 8,
+    hasVideoId: true,
+  });
+  assert.equal(JSON.stringify(result.evidence).includes('Proof video'), false);
+  assert.equal(JSON.stringify(result.evidence).includes('Visible watch page text'), false);
+});
+
+test('youtubeVideoDetails normalizes malformed page payloads', async () => {
+  const result = await youtubeVideoDetails({
+    profile: 'default',
+    evaluate: async () => ({ value: { title: 42, video: undefined } }),
+  });
+
+  assert.deepEqual(result.details, {
+    url: '',
+    title: '',
+    video: {
+      id: undefined,
+      title: undefined,
+      channel: undefined,
+      description: undefined,
+      lengthSeconds: undefined,
+      viewCount: undefined,
+      publishDate: undefined,
+      category: undefined,
+    },
+    text: '',
+  });
+  assert.deepEqual(result.evidence, {
+    pageId: undefined,
+    hasVideoId: false,
+  });
 });
 
 test('youtubeScrollToComments runs page scroll probe with small evidence', async () => {

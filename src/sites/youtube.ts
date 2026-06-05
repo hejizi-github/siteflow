@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 import { defineSiteFlow, flowEvidence } from './flow/define-flow.js';
-import { youtubeComments, youtubeScrollToComments, youtubeSearchResults } from './probes/youtube.js';
+import { youtubeComments, youtubeScrollToComments, youtubeSearchResults, youtubeVideoDetails, type YouTubeVideoDetails } from './probes/youtube.js';
 import type { ProbePage } from './probes/selector-runtime.js';
 
 const SITE = 'youtube';
@@ -31,6 +31,10 @@ interface YouTubeDeps {
     evidence: Record<string, unknown>;
   }>;
   youtubeScrollToComments(page: ProbePage): Promise<Record<string, unknown>>;
+  youtubeVideoDetails(page: ProbePage): Promise<{
+    details: YouTubeVideoDetails;
+    evidence: Record<string, unknown>;
+  }>;
 }
 
 const defaultDeps: YouTubeDeps = {
@@ -39,6 +43,7 @@ const defaultDeps: YouTubeDeps = {
   youtubeSearchResults,
   youtubeComments,
   youtubeScrollToComments,
+  youtubeVideoDetails,
 };
 
 function videoId(target: string): string | undefined {
@@ -104,33 +109,36 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions, deps: 
     });
 }
 
-async function runVideo(ctx: SiteCommandContext, options: TargetOptions): Promise<SiteReceipt> {
+async function runVideo(ctx: SiteCommandContext, options: TargetOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
   const id = videoId(options.target);
   const url = id ? `https://www.youtube.com/watch?v=${id}` : options.target;
-  const page = await openOrNavigateSitePage(ctx.profile, url, options.pageId);
-  await sleep(2200);
-  const result = await evaluateSiteExpression(ctx.profile, `(() => {
-    const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
-    const player = window.ytInitialPlayerResponse || {};
-    const details = player.videoDetails || {};
-    const micro = player.microformat?.playerMicroformatRenderer || {};
-    return {
-      url: location.href,
-      title: document.title,
-      video: {
-        id: details.videoId,
-        title: clean(details.title) || clean(document.querySelector('meta[name="title"], meta[property="og:title"]')?.getAttribute('content')) || clean(document.querySelector('h1 yt-formatted-string, h1')?.textContent),
-        channel: clean(details.author) || clean(document.querySelector('ytd-channel-name a, #owner a')?.textContent),
-        description: clean(details.shortDescription) || clean(document.querySelector('#description-inline-expander, ytd-text-inline-expander')?.innerText).slice(0, 3000),
-        lengthSeconds: details.lengthSeconds,
-        viewCount: details.viewCount,
-        publishDate: micro.publishDate,
-        category: micro.category
-      },
-      text: clean(document.body.innerText).slice(0, 5000)
-    };
-  })()`, page.pageId);
-  return siteReceipt(SITE, 'video', { target: options.target, id, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
+  return defineSiteFlow(ctx, SITE, 'video')
+    .step('open_video_page', async () => {
+      const page = await deps.openOrNavigateSitePage(ctx.profile, url, options.pageId);
+      return flowEvidence(page, pageEvidence(page));
+    })
+    .step('wait_for_watch_page', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const waitedMs = 2200;
+      await deps.sleep(waitedMs);
+      return flowEvidence({ pageId: page.pageId, waitedMs }, { pageId: page.pageId, waitedMs });
+    })
+    .step('extract_video_details', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const result = await deps.youtubeVideoDetails({ profile: ctx.profile, pageId: page.pageId });
+      return flowEvidence(result.details, result.evidence);
+    })
+    .receipt(flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const details = flow.get<YouTubeVideoDetails>('extract_video_details');
+      return siteReceipt(SITE, 'video', {
+        target: options.target,
+        id,
+        pageId: page.pageId,
+        ...details,
+        sideEffects: [],
+      });
+    });
 }
 
 async function runChannel(ctx: SiteCommandContext, options: TargetOptions): Promise<SiteReceipt> {
@@ -277,6 +285,7 @@ export const youtubeAdapter: SiteAdapter = {
 
 export const youtubeTesting = {
   runSearch,
+  runVideo,
   runComments,
   deps: defaultDeps,
 };
