@@ -98,8 +98,17 @@ function selectTargetForReplay(target: RecordedTarget): RecordedTarget | undefin
 }
 
 
+function normalizedStructuralNth(target: RecordedTarget | undefined): number | undefined {
+  const nth = target?.structural?.nth;
+  return nth === 0 ? undefined : nth;
+}
+
 function hasSameStructuralSelector(left: RecordedTarget | undefined, right: RecordedTarget): boolean {
-  return Boolean(left?.structural?.selector && left.structural.selector === right.structural?.selector);
+  return Boolean(
+    left?.structural?.selector
+      && left.structural.selector === right.structural?.selector
+      && normalizedStructuralNth(left) === normalizedStructuralNth(right),
+  );
 }
 
 function hasSameRecordedTarget(left: RecordedTarget | undefined, right: RecordedTarget | undefined): boolean {

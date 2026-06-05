@@ -1550,6 +1550,43 @@ test('unsupported event removes immediately preceding click on same target', asy
   }
 });
 
+test('unsupported selector nth 1 event preserves preceding click on same selector nth 0', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-nth-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const firstTarget = {
+      structural: { selector: 'input[type="checkbox"]', nth: 0 },
+      geometry: { x: 50, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const secondTarget = {
+      structural: { selector: 'input[type="checkbox"]', nth: 1 },
+      geometry: { x: 80, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-nth-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: firstTarget, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: secondTarget, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+      { id: 'step-2', type: 'click', target: firstTarget },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('unsupported event after different target preserves immediately preceding click', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-proxy-click-unsupported-'));
