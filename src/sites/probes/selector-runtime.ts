@@ -130,10 +130,21 @@ function normalizeLimit(value: number): number {
 }
 
 function unwrapEvaluation(value: unknown): Record<string, unknown> {
-  if (isRecord(value) && 'value' in value) {
-    return isRecord(value.value) ? value.value : {};
+  let current = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!isRecord(current)) return {};
+    if ('rows' in current || 'count' in current) return current;
+    if (isRecord(current.data)) {
+      current = current.data;
+      continue;
+    }
+    if (isRecord(current.value)) {
+      current = current.value;
+      continue;
+    }
+    return current;
   }
-  return isRecord(value) ? value : {};
+  return isRecord(current) ? current : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

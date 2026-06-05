@@ -63,6 +63,37 @@ test('extractList unwraps evaluated rows and returns small evidence', async () =
   assert.equal(JSON.stringify(result.evidence).includes('First'), false);
 });
 
+test('extractList unwraps nested evaluation envelopes', async () => {
+  const rows = [
+    { title: 'Nested' },
+  ];
+  const result = await extractList({
+    profile: 'default',
+    evaluate: async () => ({
+      ok: true,
+      data: {
+        value: {
+          rows,
+          count: rows.length,
+        },
+      },
+    }),
+  }, {
+    root: '.result',
+    limit: 3,
+    fields: {
+      title: text('.title'),
+    },
+  });
+
+  assert.deepEqual(result.rows, rows);
+  assert.deepEqual(result.evidence, {
+    count: 1,
+    limit: 3,
+    root: '.result',
+  });
+});
+
 test('createExtractListExpression applies limit after required filtering', () => {
   const expression = createExtractListExpression({
     root: '.result',
