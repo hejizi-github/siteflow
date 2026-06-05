@@ -64,6 +64,10 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
     throw unsupportedTarget(command, target);
   }
 
+  if (structural?.xpath !== undefined) {
+    throw unsupportedTarget(command, target);
+  }
+
   if (command === 'select' && structural?.nth !== undefined) {
     throw unsupportedTarget(command, target);
   }
@@ -81,6 +85,7 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
   } else if (structural?.selector) {
     pushArg(args, '--selector', structural.selector);
   } else if (geometry && command === 'click' && !hasUnsupportedSemanticTarget(target)) {
+    if (structural?.nth !== undefined) throw unsupportedTarget(command, target);
     pushArg(args, '--xy', `${geometry.x},${geometry.y}`);
   } else {
     throw unsupportedTarget(command, target);

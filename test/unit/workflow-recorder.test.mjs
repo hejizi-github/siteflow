@@ -400,6 +400,40 @@ test('exportWorkflowCli rejects non-integer structural nth', async () => {
   );
 });
 
+test('exportWorkflowCli rejects xpath targets instead of dropping xpath disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { selector: '#submit', xpath: '//*[@id="submit"]' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects nth when click falls back to geometry', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { nth: 1 }, geometry: { x: 12, y: 34 }, confidence: 'low' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
 test('exportWorkflowCli rejects placeholder-only targets instead of selector fallbacks', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
 
