@@ -325,3 +325,55 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
   assert.match(script, /siteflow --json eval 'new Promise\(resolve => setTimeout\(resolve, 1234\)\)'/);
   assert.match(script, /MUTATING step-3/);
 });
+
+test('exportWorkflowCli renders placeholder targets as selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      {
+        id: 'step-1',
+        type: 'type',
+        target: { semantic: { placeholder: 'Search docs' }, confidence: 'high' },
+        value: 'workflow',
+      },
+    ],
+  }));
+
+  assert.match(script, /siteflow --json browser type --selector '\[placeholder="Search docs"\]' --value 'workflow'/);
+});
+
+test('exportWorkflowCli rejects geometry-only type and select targets', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const geometryOnlyTarget = { geometry: { x: 12, y: 34 }, confidence: 'low' };
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target: geometryOnlyTarget, value: 'hello' }],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [{ id: 'step-1', type: 'select', target: geometryOnlyTarget, option: 'One' }],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli preserves conditional wait semantics', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'wait', selector: '#ready', ms: 2000 },
+      { id: 'step-2', type: 'wait', text: 'Loaded' },
+      { id: 'step-3', type: 'wait', urlContains: '/done' },
+    ],
+  }));
+
+  assert.match(script, /document\.querySelector\("#ready"\) !== null/);
+  assert.match(script, /Date\.now\(\) \+ 2000/);
+  assert.match(script, /document\.body\?\.innerText\.includes\("Loaded"\) === true/);
+  assert.match(script, /Date\.now\(\) \+ 1000/);
+  assert.match(script, /window\.location\.href\.includes\("\/done"\)/);
+  assert.doesNotMatch(script, /setTimeout\(resolve, 1000\)/);
+});
