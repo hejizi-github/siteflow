@@ -64,6 +64,7 @@ export function createExtractListExpression(spec: ExtractListSpec): string {
   const spec = ${JSON.stringify(normalized)};
   const roots = Array.from(document.querySelectorAll(spec.root));
   const limit = Math.min(${normalized.limit}, roots.length);
+  if (limit <= 0) return { rows: [], count: 0 };
   const readField = (root, field) => {
     const node = root.querySelector(field.selector);
     if (!node) return '';
@@ -76,11 +77,11 @@ export function createExtractListExpression(spec: ExtractListSpec): string {
   };
   const rows = [];
   for (const root of roots) {
-    const row = {};
+    const row = Object.create(null);
     for (const [name, field] of Object.entries(spec.fields)) {
       row[name] = readField(root, field);
     }
-    if (!spec.required.every((name) => Boolean(row[name]))) continue;
+    if (!spec.required.every((name) => Object.hasOwn(row, name) && Boolean(row[name]))) continue;
     rows.push(row);
     if (rows.length >= limit) break;
   }

@@ -80,9 +80,44 @@ test('createExtractListExpression applies limit after required filtering', () =>
 
   const result = Function('document', `return ${expression}`)(document);
 
-  assert.deepEqual(result.rows, [{ title: 'First' }, { title: 'Second' }]);
+  assert.deepEqual(result.rows.map(row => ({ ...row })), [{ title: 'First' }, { title: 'Second' }]);
   assert.equal(result.count, 2);
   assert.equal(expression.includes('.slice(0, limit)'), false);
+});
+
+test('createExtractListExpression returns no rows for zero limit', () => {
+  const expression = createExtractListExpression({
+    root: '.result',
+    limit: 0,
+    fields: {
+      title: text('.title'),
+    },
+  });
+  const document = fakeDocument([
+    { '.title': fakeNode('First') },
+  ]);
+
+  const result = Function('document', `return ${expression}`)(document);
+
+  assert.deepEqual(result, { rows: [], count: 0 });
+});
+
+test('createExtractListExpression requires own fields only', () => {
+  const expression = createExtractListExpression({
+    root: '.result',
+    limit: 2,
+    required: ['toString'],
+    fields: {
+      title: text('.title'),
+    },
+  });
+  const document = fakeDocument([
+    { '.title': fakeNode('First') },
+  ]);
+
+  const result = Function('document', `return ${expression}`)(document);
+
+  assert.deepEqual(result, { rows: [], count: 0 });
 });
 
 function fakeDocument(roots) {
