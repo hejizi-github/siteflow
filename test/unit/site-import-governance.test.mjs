@@ -43,12 +43,8 @@ function adapterSourceFiles() {
 
 test('direct daemon client imports stay within the explicit allowlist', () => {
   const found = [];
-  for (const entry of fs.readdirSync(sitesDir)) {
-    if (!entry.endsWith('.ts')) continue;
-    const fullPath = path.join(sitesDir, entry);
-    const relative = path.relative(repoRoot, fullPath).replace(/\\/g, '/');
-    const source = fs.readFileSync(fullPath, 'utf8');
-    if (source.includes("from '../daemon/client.js'")) {
+  for (const { relative, source } of siteSourceFiles()) {
+    if (/from ['"](?:\.\.\/)+daemon\/client\.js['"]/.test(source)) {
       found.push(relative);
     }
   }
@@ -60,12 +56,8 @@ test('direct daemon client imports stay within the explicit allowlist', () => {
 
 test('site adapters use the capabilities facade instead of helper internals', () => {
   const found = [];
-  for (const entry of fs.readdirSync(sitesDir)) {
-    if (!entry.endsWith('.ts')) continue;
-    const fullPath = path.join(sitesDir, entry);
-    const relative = path.relative(repoRoot, fullPath).replace(/\\/g, '/');
-    const source = fs.readFileSync(fullPath, 'utf8');
-    if (source.includes("from './helpers.js'")) {
+  for (const { relative, source } of siteSourceFiles()) {
+    if (/from ['"](?:\.\/|(?:\.\.\/)+)helpers\.js['"]/.test(source)) {
       found.push(relative);
     }
   }
