@@ -17,8 +17,12 @@ function unsupportedTarget(command: string, target: RecordedTarget): SiteflowErr
   );
 }
 
+function selectorForAttribute(name: string, value: string): string {
+  return `[${name}=${JSON.stringify(value)}]`;
+}
+
 function selectorForPlaceholder(placeholder: string): string {
-  return `[placeholder=${JSON.stringify(placeholder)}]`;
+  return selectorForAttribute('placeholder', placeholder);
 }
 
 function waitExpression(step: Extract<WorkflowStep, { type: 'wait' }>): string {
@@ -44,13 +48,15 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
   if (semantic?.text) {
     pushArg(args, command === 'select' ? '--combobox-text' : '--text', semantic.text);
   } else if (semantic?.aria) {
-    pushArg(args, command === 'select' ? '--combobox-text' : '--aria', semantic.aria);
-  } else if (semantic?.label) {
-    pushArg(args, command === 'select' ? '--combobox-text' : '--aria', semantic.label);
+    pushArg(args, command === 'select' ? '--selector' : '--aria', command === 'select' ? selectorForAttribute('aria-label', semantic.aria) : semantic.aria);
+  } else if (semantic?.label && command !== 'select') {
+    pushArg(args, '--aria', semantic.label);
   } else if (semantic?.placeholder) {
     pushArg(args, '--selector', selectorForPlaceholder(semantic.placeholder));
   } else if (structural?.selector) {
     pushArg(args, '--selector', structural.selector);
+  } else if (semantic?.role) {
+    pushArg(args, '--selector', selectorForAttribute('role', semantic.role));
   } else if (geometry && command === 'click') {
     pushArg(args, '--xy', `${geometry.x},${geometry.y}`);
   } else {

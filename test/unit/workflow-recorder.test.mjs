@@ -342,6 +342,56 @@ test('exportWorkflowCli renders placeholder targets as selector fallbacks', asyn
   assert.match(script, /siteflow --json browser type --selector '\[placeholder="Search docs"\]' --value 'workflow'/);
 });
 
+test('exportWorkflowCli renders role-only click targets as selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      {
+        id: 'step-1',
+        type: 'click',
+        target: { semantic: { role: 'button' }, confidence: 'high' },
+      },
+    ],
+  }));
+
+  assert.match(script, /siteflow --json browser click --selector '\[role="button"\]'/);
+});
+
+test('exportWorkflowCli renders select aria targets as aria-label selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      {
+        id: 'step-1',
+        type: 'select',
+        target: { semantic: { aria: 'Country' }, confidence: 'high' },
+        option: 'Canada',
+      },
+    ],
+  }));
+
+  assert.match(script, /siteflow --json browser select --selector '\[aria-label="Country"\]' --option 'Canada'/);
+  assert.doesNotMatch(script, /--combobox-text 'Country'/);
+});
+
+test('exportWorkflowCli rejects label-only select targets', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { semantic: { label: 'Country' }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
 test('exportWorkflowCli rejects geometry-only type and select targets', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
   const geometryOnlyTarget = { geometry: { x: 12, y: 34 }, confidence: 'low' };
