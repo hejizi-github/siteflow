@@ -62,3 +62,51 @@ test('extractList unwraps evaluated rows and returns small evidence', async () =
   });
   assert.equal(JSON.stringify(result.evidence).includes('First'), false);
 });
+
+test('createExtractListExpression applies limit after required filtering', () => {
+  const expression = createExtractListExpression({
+    root: '.result',
+    limit: 2,
+    required: ['title'],
+    fields: {
+      title: text('.title'),
+    },
+  });
+  const document = fakeDocument([
+    {},
+    { '.title': fakeNode('First') },
+    { '.title': fakeNode('Second') },
+  ]);
+
+  const result = Function('document', `return ${expression}`)(document);
+
+  assert.deepEqual(result.rows, [{ title: 'First' }, { title: 'Second' }]);
+  assert.equal(result.count, 2);
+  assert.equal(expression.includes('.slice(0, limit)'), false);
+});
+
+function fakeDocument(roots) {
+  return {
+    querySelectorAll(selector) {
+      return selector === '.result' ? roots.map(fakeRoot) : [];
+    },
+  };
+}
+
+function fakeRoot(fields) {
+  return {
+    querySelector(selector) {
+      return fields[selector] ?? null;
+    },
+  };
+}
+
+function fakeNode(textContent, attributes = {}) {
+  return {
+    textContent,
+    href: attributes.href,
+    getAttribute(attribute) {
+      return attributes[attribute] ?? '';
+    },
+  };
+}

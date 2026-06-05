@@ -75,12 +75,14 @@ export function createExtractListExpression(spec: ExtractListSpec): string {
     return Number.isFinite(field.max) ? value.slice(0, field.max) : value;
   };
   const rows = [];
-  for (const root of roots.slice(0, limit)) {
+  for (const root of roots) {
     const row = {};
     for (const [name, field] of Object.entries(spec.fields)) {
       row[name] = readField(root, field);
     }
-    if (spec.required.every((name) => Boolean(row[name]))) rows.push(row);
+    if (!spec.required.every((name) => Boolean(row[name]))) continue;
+    rows.push(row);
+    if (rows.length >= limit) break;
   }
   return { rows, count: rows.length };
 })()`;
