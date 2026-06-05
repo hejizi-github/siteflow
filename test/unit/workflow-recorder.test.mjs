@@ -25,7 +25,7 @@ test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
       { id: 'step-2', type: 'click', target },
       { id: 'step-3', type: 'type', target, value: 'hello' },
       { id: 'step-4', type: 'select', target, option: 'A' },
-      { id: 'step-5', type: 'scroll' },
+      { id: 'step-5', type: 'scroll', deltaX: 0, deltaY: 120 },
       { id: 'step-6', type: 'wait' },
       { id: 'step-7', type: 'screenshot' },
     ],
@@ -243,4 +243,62 @@ test('validateWorkflow rejects missing or invalid required step fields', async (
       /BAD_WORKFLOW/,
     );
   }
+});
+
+test('validateWorkflow rejects malformed scroll deltas', async () => {
+  const { validateWorkflow } = await validation();
+  const stepCases = [
+    { id: 'step-1', type: 'scroll', deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0 },
+    { id: 'step-1', type: 'scroll', deltaX: '0', deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0, deltaY: '120' },
+    { id: 'step-1', type: 'scroll', deltaX: Number.NaN, deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0, deltaY: Number.POSITIVE_INFINITY },
+  ];
+
+  for (const step of stepCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects malformed optional step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+  const stepCases = [
+    { id: 'step-1', type: 'click', target, button: 'primary' },
+    { id: 'step-1', type: 'type', target, value: 'hello', clear: 'true' },
+    { id: 'step-1', type: 'type', target, value: 'hello', pressEnter: 1 },
+    { id: 'step-1', type: 'wait', ms: '100' },
+    { id: 'step-1', type: 'wait', ms: Number.NaN },
+    { id: 'step-1', type: 'wait', ms: Number.POSITIVE_INFINITY },
+    { id: 'step-1', type: 'wait', urlContains: 1 },
+    { id: 'step-1', type: 'wait', text: 1 },
+    { id: 'step-1', type: 'wait', selector: 1 },
+    { id: 'step-1', type: 'screenshot', fullPage: 'true' },
+  ];
+
+  for (const step of stepCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow preserves valid optional step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+  const steps = [
+    { id: 'step-1', type: 'click', target, button: 'middle' },
+    { id: 'step-2', type: 'type', target, value: 'hello', clear: true, pressEnter: false },
+    { id: 'step-3', type: 'wait', ms: 250, urlContains: '/done', text: 'Done', selector: '#done' },
+    { id: 'step-4', type: 'screenshot', fullPage: true },
+  ];
+
+  const workflow = validateWorkflow(validWorkflow({ steps }));
+
+  assert.deepEqual(workflow.steps, steps);
 });

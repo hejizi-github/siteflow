@@ -40,6 +40,11 @@ function requireBoolean(value: unknown, field: string): boolean {
   return value;
 }
 
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  return requireBoolean(value, field);
+}
+
 function requireFiniteNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw workflowError('BAD_WORKFLOW', `${field} must be a finite number.`);
@@ -157,8 +162,31 @@ function validateStep(value: unknown, index: number): WorkflowStep {
     validateTarget(value.target, `steps[${index}].target`);
   }
 
-  if (type === 'type') requireString(value.value, `steps[${index}].value`);
+  if (type === 'click' && value.button !== undefined && value.button !== 'left' && value.button !== 'right' && value.button !== 'middle') {
+    throw workflowError('BAD_WORKFLOW', `steps[${index}].button must be left, right, or middle.`);
+  }
+
+  if (type === 'type') {
+    requireString(value.value, `steps[${index}].value`);
+    optionalBoolean(value.clear, `steps[${index}].clear`);
+    optionalBoolean(value.pressEnter, `steps[${index}].pressEnter`);
+  }
+
   if (type === 'select') requireString(value.option, `steps[${index}].option`);
+
+  if (type === 'scroll') {
+    requireFiniteNumber(value.deltaX, `steps[${index}].deltaX`);
+    requireFiniteNumber(value.deltaY, `steps[${index}].deltaY`);
+  }
+
+  if (type === 'wait') {
+    optionalFiniteNumber(value.ms, `steps[${index}].ms`);
+    optionalString(value.urlContains, `steps[${index}].urlContains`);
+    optionalString(value.text, `steps[${index}].text`);
+    optionalString(value.selector, `steps[${index}].selector`);
+  }
+
+  if (type === 'screenshot') optionalBoolean(value.fullPage, `steps[${index}].fullPage`);
 
   return { ...value, id, type } as WorkflowStep;
 }
