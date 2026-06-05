@@ -14,6 +14,7 @@ import {
   youtubeScrollToComments,
   youtubeVideoDetails,
   youtubeSearchResults,
+  youtubeTranscriptDiscovery,
 } from '../../dist/sites/probes/youtube.js';
 
 test('createExtractListExpression includes selectors, attributes, and bounded limit', async () => {
@@ -422,6 +423,56 @@ test('youtubeChannelSummary normalizes malformed page payloads', async () => {
   assert.deepEqual(result.evidence, {
     pageId: undefined,
     hasHeading: false,
+  });
+});
+
+test('youtubeTranscriptDiscovery evaluates caption tracks with small evidence', async () => {
+  const discovery = {
+    url: 'https://www.youtube.com/watch?v=abc123XYZ_1',
+    title: 'Watch',
+    tracks: [
+      { name: 'English', languageCode: 'en', baseUrl: 'https://caption.example/en' },
+      { name: '中文', languageCode: 'zh', baseUrl: 'https://caption.example/zh' },
+    ],
+    transcriptUnavailableHint: false,
+  };
+  const result = await youtubeTranscriptDiscovery({
+    profile: 'default',
+    pageId: 11,
+    evaluate: async (profile, expression, pageId) => {
+      assert.equal(profile, 'default');
+      assert.equal(pageId, 11);
+      assert.equal(expression.includes('captionTracks'), true);
+      return { value: discovery };
+    },
+  });
+
+  assert.deepEqual(result.discovery, discovery);
+  assert.deepEqual(result.evidence, {
+    pageId: 11,
+    trackCount: 2,
+    transcriptUnavailableHint: false,
+  });
+  assert.equal(JSON.stringify(result.evidence).includes('caption.example'), false);
+  assert.equal(JSON.stringify(result.evidence).includes('English'), false);
+});
+
+test('youtubeTranscriptDiscovery normalizes malformed page payloads', async () => {
+  const result = await youtubeTranscriptDiscovery({
+    profile: 'default',
+    evaluate: async () => ({ value: { tracks: [{ name: 12 }, null], transcriptUnavailableHint: 'yes' } }),
+  });
+
+  assert.deepEqual(result.discovery, {
+    url: '',
+    title: '',
+    tracks: [{ name: undefined, languageCode: undefined, baseUrl: undefined }],
+    transcriptUnavailableHint: false,
+  });
+  assert.deepEqual(result.evidence, {
+    pageId: undefined,
+    trackCount: 1,
+    transcriptUnavailableHint: false,
   });
 });
 

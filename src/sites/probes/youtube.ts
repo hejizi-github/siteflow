@@ -49,6 +49,19 @@ export interface YouTubeChannelSummary {
   text: string;
 }
 
+export interface YouTubeTranscriptTrack {
+  name?: string;
+  languageCode?: string;
+  baseUrl?: string;
+}
+
+export interface YouTubeTranscriptDiscovery {
+  url: string;
+  title: string;
+  tracks: YouTubeTranscriptTrack[];
+  transcriptUnavailableHint: boolean;
+}
+
 export async function youtubeSearchResults(page: ProbePage, options: YouTubeProbeOptions): Promise<{ videos: YouTubeVideo[]; evidence: ExtractListResult['evidence'] & { requestedLimit: number } }> {
   const requestedLimit = normalizeLimit(options.limit);
   const scanLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), 300);
@@ -134,12 +147,44 @@ export async function youtubeChannelSummary(page: ProbePage): Promise<{ summary:
   };
 }
 
+export async function youtubeTranscriptDiscovery(page: ProbePage): Promise<{ discovery: YouTubeTranscriptDiscovery; evidence: Record<string, unknown> }> {
+  const result = normalizeTranscriptDiscovery(await evaluateTranscriptDiscovery(page));
+  return {
+    discovery: result,
+    evidence: {
+      pageId: page.pageId,
+      trackCount: result.tracks.length,
+      transcriptUnavailableHint: result.transcriptUnavailableHint,
+    },
+  };
+}
+
 export async function youtubeScrollToComments(page: ProbePage): Promise<Record<string, unknown>> {
   return {
     ...(await scrollPage(page)),
     pageId: page.pageId,
     scrolled: true,
   };
+}
+
+async function evaluateTranscriptDiscovery(page: ProbePage): Promise<unknown> {
+  const evaluate = page.evaluate ?? evaluateSiteExpression;
+  return unwrapValue(await evaluate(
+    page.profile,
+    `(() => {
+      const player = window.ytInitialPlayerResponse;
+      const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+      const unavailableControl = Array.from(document.querySelectorAll('button,[role="button"]'))
+        .find(el => String(el.getAttribute('aria-label') || '').includes('无法显示字幕') || String(el.textContent || '').includes('无法显示字幕'));
+      return {
+        url: location.href,
+        title: document.title,
+        tracks: tracks.map(t => ({ name: t.name?.simpleText, languageCode: t.languageCode, baseUrl: t.baseUrl })),
+        transcriptUnavailableHint: Boolean(unavailableControl),
+      };
+    })()`,
+    page.pageId,
+  ));
 }
 
 async function evaluateChannelSummary(page: ProbePage): Promise<unknown> {
@@ -187,6 +232,21 @@ async function evaluateVideoDetails(page: ProbePage): Promise<YouTubeVideoDetail
     page.pageId,
   );
   return unwrapValue(result) as YouTubeVideoDetails;
+}
+
+function normalizeTranscriptDiscovery(value: unknown): YouTubeTranscriptDiscovery {
+  const record = isRecord(value) ? value : {};
+  const tracks = Array.isArray(record.tracks) ? record.tracks.filter(isRecord).map(track => ({
+    name: stringValue(track.name) || undefined,
+    languageCode: stringValue(track.languageCode) || undefined,
+    baseUrl: stringValue(track.baseUrl) || undefined,
+  })) : [];
+  return {
+    url: stringValue(record.url),
+    title: stringValue(record.title),
+    tracks,
+    transcriptUnavailableHint: record.transcriptUnavailableHint === true,
+  };
 }
 
 function normalizeChannelSummary(value: unknown): YouTubeChannelSummary {

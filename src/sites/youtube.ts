@@ -1,10 +1,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 import { defineSiteFlow, flowEvidence } from './flow/define-flow.js';
-import { youtubeChannelSummary, youtubeComments, youtubeScrollToComments, youtubeSearchResults, youtubeVideoDetails, type YouTubeChannelSummary, type YouTubeVideoDetails } from './probes/youtube.js';
+import { youtubeChannelSummary, youtubeComments, youtubeScrollToComments, youtubeSearchResults, youtubeTranscriptDiscovery, youtubeVideoDetails, type YouTubeChannelSummary, type YouTubeTranscriptDiscovery, type YouTubeTranscriptTrack, type YouTubeVideoDetails } from './probes/youtube.js';
 import type { ProbePage } from './probes/selector-runtime.js';
 
 const SITE = 'youtube';
@@ -39,6 +39,15 @@ interface YouTubeDeps {
     summary: YouTubeChannelSummary;
     evidence: Record<string, unknown>;
   }>;
+  youtubeTranscriptDiscovery(page: ProbePage): Promise<{
+    discovery: YouTubeTranscriptDiscovery;
+    evidence: Record<string, unknown>;
+  }>;
+  fetchCaptionText(url: string): Promise<string>;
+  writeTranscriptFile(out: string | undefined, id: string | undefined, text: string): Promise<{
+    filePath: string;
+    bytes: number;
+  }>;
 }
 
 const defaultDeps: YouTubeDeps = {
@@ -49,6 +58,9 @@ const defaultDeps: YouTubeDeps = {
   youtubeScrollToComments,
   youtubeVideoDetails,
   youtubeChannelSummary,
+  youtubeTranscriptDiscovery,
+  fetchCaptionText,
+  writeTranscriptFile,
 };
 
 function videoId(target: string): string | undefined {
@@ -68,6 +80,38 @@ function smallScrollEvidence(value: Record<string, unknown>): Record<string, unk
   };
 }
 
+function trackScore(track?: YouTubeTranscriptTrack): number {
+  return Number(track?.languageCode === 'en') * 10 + Number((track?.name || '').includes('自动生成'));
+}
+
+function smallCaptionFetchEvidence(value: CaptionFetchResult): Record<string, unknown> {
+  return {
+    skipped: value.skipped,
+    hasText: Boolean(value.text),
+    ...(value.selectedTrack?.languageCode ? { languageCode: value.selectedTrack.languageCode } : {}),
+  };
+}
+
+function smallTranscriptWriteEvidence(value: TranscriptWriteResult): Record<string, unknown> {
+  return {
+    wrote: value.wrote,
+    ...(value.bytes ? { bytes: value.bytes } : {}),
+  };
+}
+
+interface CaptionFetchResult {
+  text: string;
+  selectedTrack?: YouTubeTranscriptTrack;
+  lastError: string;
+  skipped: boolean;
+}
+
+interface TranscriptWriteResult {
+  filePath?: string;
+  bytes: number;
+  wrote: boolean;
+}
+
 async function fetchCaptionText(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: {
@@ -79,6 +123,17 @@ async function fetchCaptionText(url: string): Promise<string> {
   const text = await response.text();
   if (!text) throw new Error('caption fetch returned empty body');
   return text;
+}
+
+async function writeTranscriptFile(out: string | undefined, id: string | undefined, text: string): Promise<{ filePath: string; bytes: number }> {
+  const outDir = path.resolve(out || 'downloads/youtube');
+  await fs.mkdir(outDir, { recursive: true });
+  const filePath = path.join(outDir, `${id || 'youtube-transcript'}.xml`);
+  await fs.writeFile(filePath, text, 'utf8');
+  return {
+    filePath,
+    bytes: Buffer.byteLength(text),
+  };
 }
 
 async function runSearch(ctx: SiteCommandContext, options: SearchOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
@@ -217,61 +272,90 @@ async function runComments(ctx: SiteCommandContext, options: CommentsOptions, de
     });
 }
 
-async function runTranscript(ctx: SiteCommandContext, options: TranscriptOptions): Promise<SiteReceipt> {
+async function runTranscript(ctx: SiteCommandContext, options: TranscriptOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
   const id = videoId(options.target);
-  const page = await openOrNavigateSitePage(ctx.profile, id ? `https://www.youtube.com/watch?v=${id}` : options.target, options.pageId);
-  await sleep(1800);
-  const result = await evaluateSiteExpression(ctx.profile, `(() => {
-    const player = window.ytInitialPlayerResponse;
-    const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
-    const unavailableControl = Array.from(document.querySelectorAll('button,[role="button"]'))
-      .find(el => String(el.getAttribute('aria-label') || '').includes('无法显示字幕') || String(el.textContent || '').includes('无法显示字幕'));
-    return {
-      url: location.href,
-      title: document.title,
-      tracks: tracks.map(t => ({ name: t.name?.simpleText, languageCode: t.languageCode, baseUrl: t.baseUrl })),
-      transcriptUnavailableHint: Boolean(unavailableControl),
-    };
-  })()`, page.pageId);
-  const data = result.value as { url?: string; title?: string; tracks?: Array<{ name?: string; languageCode?: string; baseUrl?: string }>; transcriptUnavailableHint?: boolean };
-  const tracks = data.tracks || [];
-  if (!tracks.length) {
-    return siteReceipt(SITE, 'transcript', { target: options.target, id, pageId: page.pageId, ...data, sideEffects: [] }, false, [{ code: 'NO_TRANSCRIPT', message: 'No caption track found on this video.' }]);
-  }
-
-  const orderedTracks = [...tracks].sort((a, b) => {
-    const score = (track?: { languageCode?: string; name?: string }) =>
-      Number(track?.languageCode === 'en') * 10 + Number((track?.name || '').includes('自动生成'));
-    return score(b) - score(a);
-  });
-
-  let text = '';
-  let selectedTrack = orderedTracks[0];
-  let lastError = 'caption fetch returned empty body';
-  for (const track of orderedTracks) {
-    if (!track?.baseUrl) continue;
-    try {
-      text = await fetchCaptionText(track.baseUrl);
-      selectedTrack = track;
-      break;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      selectedTrack = track;
-    }
-  }
-
-  if (!text) {
-    const unavailable = data.transcriptUnavailableHint || /empty body|fetch failed/i.test(lastError);
-    return siteReceipt(SITE, 'transcript', { target: options.target, id, pageId: page.pageId, ...data, selectedTrack, sideEffects: [] }, false, [{
-      code: unavailable ? 'TRANSCRIPT_UNAVAILABLE' : 'CAPTION_FETCH_FAILED',
-      message: unavailable ? 'This YouTube video exposes caption tracks but the transcript body is unavailable from the watch page.' : lastError,
-    }]);
-  }
-  const outDir = path.resolve(options.out || 'downloads/youtube');
-  await fs.mkdir(outDir, { recursive: true });
-  const filePath = path.join(outDir, `${id || 'youtube-transcript'}.xml`);
-  await fs.writeFile(filePath, text, 'utf8');
-  return siteReceipt(SITE, 'transcript', { target: options.target, id, pageId: page.pageId, ...data, selectedTrack, filePath, bytes: Buffer.byteLength(text), sideEffects: ['file_download'] });
+  return defineSiteFlow(ctx, SITE, 'transcript')
+    .step('open_video_page', async () => {
+      const page = await deps.openOrNavigateSitePage(ctx.profile, id ? `https://www.youtube.com/watch?v=${id}` : options.target, options.pageId);
+      return flowEvidence(page, pageEvidence(page));
+    })
+    .step('wait_for_watch_page', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const waitedMs = 1800;
+      await deps.sleep(waitedMs);
+      return flowEvidence({ pageId: page.pageId, waitedMs }, { pageId: page.pageId, waitedMs });
+    })
+    .step('discover_caption_tracks', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const result = await deps.youtubeTranscriptDiscovery({ profile: ctx.profile, pageId: page.pageId });
+      return flowEvidence(result.discovery, result.evidence);
+    })
+    .step('fetch_caption_text', async flow => {
+      const discovery = flow.get<YouTubeTranscriptDiscovery>('discover_caption_tracks');
+      const orderedTracks = [...discovery.tracks].sort((a, b) => trackScore(b) - trackScore(a));
+      let text = '';
+      let selectedTrack = orderedTracks[0];
+      let lastError = 'caption fetch returned empty body';
+      if (!orderedTracks.length) {
+        const value: CaptionFetchResult = { text, selectedTrack, lastError, skipped: true };
+        return flowEvidence(value, smallCaptionFetchEvidence(value));
+      }
+      for (const track of orderedTracks) {
+        if (!track?.baseUrl) continue;
+        try {
+          text = await deps.fetchCaptionText(track.baseUrl);
+          selectedTrack = track;
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+          selectedTrack = track;
+        }
+      }
+      const value: CaptionFetchResult = { text, selectedTrack, lastError, skipped: false };
+      return flowEvidence(value, smallCaptionFetchEvidence(value));
+    })
+    .step('write_transcript_file', async flow => {
+      const caption = flow.get<CaptionFetchResult>('fetch_caption_text');
+      if (!caption.text) {
+        const value: TranscriptWriteResult = { bytes: 0, wrote: false };
+        return flowEvidence(value, smallTranscriptWriteEvidence(value));
+      }
+      const value = {
+        ...(await deps.writeTranscriptFile(options.out, id, caption.text)),
+        wrote: true,
+      };
+      return flowEvidence(value, smallTranscriptWriteEvidence(value));
+    })
+    .receipt(flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const discovery = flow.get<YouTubeTranscriptDiscovery>('discover_caption_tracks');
+      const caption = flow.get<CaptionFetchResult>('fetch_caption_text');
+      const written = flow.get<TranscriptWriteResult>('write_transcript_file');
+      const selectedTrack = caption.selectedTrack;
+      const base = {
+        target: options.target,
+        id,
+        pageId: page.pageId,
+        ...discovery,
+        ...(selectedTrack ? { selectedTrack } : {}),
+      };
+      if (!discovery.tracks.length) {
+        return siteReceipt(SITE, 'transcript', { ...base, sideEffects: [] }, false, [{ code: 'NO_TRANSCRIPT', message: 'No caption track found on this video.' }]);
+      }
+      if (!caption.text) {
+        const unavailable = discovery.transcriptUnavailableHint || /empty body|fetch failed/i.test(caption.lastError);
+        return siteReceipt(SITE, 'transcript', { ...base, sideEffects: [] }, false, [{
+          code: unavailable ? 'TRANSCRIPT_UNAVAILABLE' : 'CAPTION_FETCH_FAILED',
+          message: unavailable ? 'This YouTube video exposes caption tracks but the transcript body is unavailable from the watch page.' : caption.lastError,
+        }]);
+      }
+      return siteReceipt(SITE, 'transcript', {
+        ...base,
+        filePath: written.filePath,
+        bytes: written.bytes,
+        sideEffects: ['file_download'],
+      });
+    });
 }
 
 export const youtubeAdapter: SiteAdapter = {
@@ -312,5 +396,6 @@ export const youtubeTesting = {
   runVideo,
   runChannel,
   runComments,
+  runTranscript,
   deps: defaultDeps,
 };

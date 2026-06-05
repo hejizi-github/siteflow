@@ -243,3 +243,80 @@ test('youtube channel proof returns step trace through injected deps', async () 
   assert.equal(stepTrace.includes('Proof channel'), false);
   assert.equal(stepTrace.includes('Visible channel page text'), false);
 });
+
+test('youtube transcript proof returns step trace through injected deps', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 7, url: 'https://www.youtube.com/watch?v=abc123XYZ_1', title: 'Watch' }),
+    sleep: async () => {},
+    youtubeTranscriptDiscovery: async () => ({
+      discovery: {
+        url: 'https://www.youtube.com/watch?v=abc123XYZ_1',
+        title: 'Watch',
+        tracks: [
+          { name: 'English', languageCode: 'en', baseUrl: 'https://caption.example/private-track' },
+        ],
+        transcriptUnavailableHint: false,
+      },
+      evidence: {
+        pageId: 7,
+        trackCount: 1,
+        transcriptUnavailableHint: false,
+      },
+    }),
+    fetchCaptionText: async () => '<transcript>private caption text</transcript>',
+    writeTranscriptFile: async () => ({
+      filePath: '/tmp/youtube-transcript.xml',
+      bytes: 42,
+    }),
+  };
+
+  const receipt = await youtubeTesting.runTranscript({ profile: 'default' }, { target: 'abc123XYZ_1', out: '/tmp' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'transcript');
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.filePath, '/tmp/youtube-transcript.xml');
+  assert.equal(receipt.observations.bytes, 42);
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_video_page', 'wait_for_watch_page', 'discover_caption_tracks', 'fetch_caption_text', 'write_transcript_file']);
+  const stepTrace = JSON.stringify(receipt.steps);
+  assert.equal(stepTrace.includes('caption.example'), false);
+  assert.equal(stepTrace.includes('private caption text'), false);
+  assert.equal(stepTrace.includes('/tmp/youtube-transcript.xml'), false);
+});
+
+test('youtube transcript proof preserves no transcript receipt shape', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 8, url: 'https://www.youtube.com/watch?v=abc123XYZ_1', title: 'Watch' }),
+    sleep: async () => {},
+    youtubeTranscriptDiscovery: async () => ({
+      discovery: {
+        url: 'https://www.youtube.com/watch?v=abc123XYZ_1',
+        title: 'Watch',
+        tracks: [],
+        transcriptUnavailableHint: false,
+      },
+      evidence: {
+        pageId: 8,
+        trackCount: 0,
+        transcriptUnavailableHint: false,
+      },
+    }),
+    fetchCaptionText: async () => {
+      throw new Error('should not fetch captions without tracks');
+    },
+    writeTranscriptFile: async () => {
+      throw new Error('should not write captions without text');
+    },
+  };
+
+  const receipt = await youtubeTesting.runTranscript({ profile: 'default' }, { target: 'abc123XYZ_1' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'transcript');
+  assert.equal(receipt.ok, false);
+  assert.equal(receipt.errors[0].code, 'NO_TRANSCRIPT');
+  assert.equal(receipt.observations.tracks.length, 0);
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_video_page', 'wait_for_watch_page', 'discover_caption_tracks', 'fetch_caption_text', 'write_transcript_file']);
+});
