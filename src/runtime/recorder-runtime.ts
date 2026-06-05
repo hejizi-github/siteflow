@@ -129,6 +129,12 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
   let lastInputStep: Extract<WorkflowStep, { type: 'type' }> | undefined;
   let lastSelectTargetKey: string | undefined;
   let lastSelectStep: Extract<WorkflowStep, { type: 'select' }> | undefined;
+  const resetCoalescing = (): void => {
+    lastInputTargetKey = undefined;
+    lastInputStep = undefined;
+    lastSelectTargetKey = undefined;
+    lastSelectStep = undefined;
+  };
 
   for (const event of input.events) {
     if (event.type === 'input' || event.type === 'change') {
@@ -230,12 +236,9 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       continue;
     }
 
-    lastInputTargetKey = undefined;
-    lastInputStep = undefined;
-    lastSelectTargetKey = undefined;
-    lastSelectStep = undefined;
 
     if (event.type === 'click') {
+      resetCoalescing();
       if (!event.target) {
         unsupportedEvents += 1;
         continue;
@@ -251,6 +254,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
     }
 
     if (event.type === 'scroll') {
+      resetCoalescing();
       steps.push({
         id: nextStepId(steps),
         type: 'scroll',
@@ -261,6 +265,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
     }
 
     if (event.type === 'unsupported') {
+      resetCoalescing();
       removePreviousClickIfSameTarget(steps, event.target);
       unsupportedEvents += 1;
       continue;
@@ -275,6 +280,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         continue;
       }
       if (event.key === 'Enter' && event.control === 'input' && event.target && hasReplayableTypeTarget(event.target)) {
+        resetCoalescing();
         steps.push({
           id: nextStepId(steps),
           type: 'type',
@@ -287,6 +293,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
       } else {
         unsupportedEvents += 1;
       }
+      continue;
     }
   }
 

@@ -169,8 +169,9 @@ function validateStep(value: unknown, index: number): WorkflowStep {
   if (type === 'type') {
     const pressEnter = optionalBoolean(value.pressEnter, `steps[${index}].pressEnter`);
     const clear = optionalBoolean(value.clear, `steps[${index}].clear`);
-    if (typeof value.value !== 'string' || (value.value.length === 0 && (pressEnter !== true || clear !== false))) {
-      throw workflowError('BAD_WORKFLOW', `steps[${index}].value must be a non-empty string unless pressEnter is true and clear is false.`);
+    const allowsEmptyValue = clear === true || (pressEnter === true && clear === false);
+    if (typeof value.value !== 'string' || (value.value.length === 0 && !allowsEmptyValue)) {
+      throw workflowError('BAD_WORKFLOW', `steps[${index}].value must be a non-empty string unless clear is true or pressEnter is true and clear is false.`);
     }
   }
 

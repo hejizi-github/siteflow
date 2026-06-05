@@ -348,6 +348,32 @@ test('validateWorkflow accepts recorded Enter key type steps with empty value', 
   assert.deepEqual(workflow.steps, [step]);
 });
 
+test('validateWorkflow accepts cleared type steps with empty value', async () => {
+  const { validateWorkflow } = await validation();
+  const step = {
+    id: 'step-1',
+    type: 'type',
+    target: { confidence: 'high' },
+    value: '',
+    clear: true,
+  };
+
+  const workflow = validateWorkflow(validWorkflow({ steps: [step] }));
+
+  assert.deepEqual(workflow.steps, [step]);
+});
+
+test('validateWorkflow rejects empty type steps without clear or Enter intent', async () => {
+  const { validateWorkflow } = await validation();
+
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target: { confidence: 'high' }, value: '' }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
 test('validateWorkflow rejects empty Enter type steps unless clear is false', async () => {
   const { validateWorkflow } = await validation();
   const target = { confidence: 'high' };
@@ -768,6 +794,39 @@ test('normalizeRecordedEvents merges repeated input events', async () => {
     { id: 'step-1', type: 'open', url: 'https://example.test/search' },
     { id: 'step-2', type: 'type', target, value: 'apple', clear: true },
   ]);
+});
+
+test('normalizeRecordedEvents preserves input coalescing across unsupported Tab keydown', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-input-tab-coalesce-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Search' },
+      structural: { selector: 'input[name="q"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-input-tab-coalesce',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/search',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'input', control: 'input', target, value: 'appl', url: 'https://example.test/search', title: 'Search' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'keydown', control: 'input', key: 'Tab', target, url: 'https://example.test/search', title: 'Search' },
+        { ts: '2026-06-05T00:00:03.000Z', type: 'change', control: 'input', target, value: 'apple', url: 'https://example.test/search', title: 'Search' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+      { id: 'step-2', type: 'type', target, value: 'apple', clear: true },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
