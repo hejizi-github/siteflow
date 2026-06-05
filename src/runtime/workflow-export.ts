@@ -5,6 +5,15 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function shellQuoteTypedValue(value: string): string {
+  if (/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) return `"${value}"`;
+  return shellQuote(value);
+}
+
+function commentLabel(label: string): string {
+  return label.replaceAll('\r', ' ').replaceAll('\n', ' ');
+}
+
 function pushArg(args: string[], name: string, value: string): void {
   args.push(name, shellQuote(value));
 }
@@ -81,7 +90,7 @@ function stepCommand(step: WorkflowStep): string {
       return args.join(' ');
     }
     case 'type': {
-      const args = ['siteflow', '--json', 'browser', 'type', ...targetArgs(step.target, 'type'), '--value', shellQuote(step.value)];
+      const args = ['siteflow', '--json', 'browser', 'type', ...targetArgs(step.target, 'type'), '--value', shellQuoteTypedValue(step.value)];
       if (step.clear === false) args.push('--no-clear');
       if (step.pressEnter) args.push('--enter');
       return args.join(' ');
@@ -101,6 +110,14 @@ function stepCommand(step: WorkflowStep): string {
   }
 }
 
+function stepComment(step: WorkflowStep): string | undefined {
+  if (step.mutating) {
+    return step.label ? `# MUTATING ${step.id}: ${commentLabel(step.label)}` : `# MUTATING ${step.id}`;
+  }
+  if (step.label) return `# ${step.id}: ${step.type} - ${commentLabel(step.label)}`;
+  return undefined;
+}
+
 export function exportWorkflowCli(workflow: SiteflowWorkflow): string {
   const lines = [
     '#!/usr/bin/env bash',
@@ -110,7 +127,8 @@ export function exportWorkflowCli(workflow: SiteflowWorkflow): string {
   ];
 
   for (const step of workflow.steps) {
-    if (step.mutating) lines.push(`# MUTATING ${step.id}`);
+    const comment = stepComment(step);
+    if (comment) lines.push(comment);
     lines.push(stepCommand(step));
   }
 

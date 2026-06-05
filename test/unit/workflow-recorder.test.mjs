@@ -313,17 +313,18 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
     variables: [],
     steps: [
       { id: 'step-1', type: 'open', url: 'https://example.com/' },
-      { id: 'step-2', type: 'type', target: { semantic: { label: 'Email' }, confidence: 'high' }, value: '${LOGIN_EMAIL}' },
-      { id: 'step-3', type: 'click', target: { semantic: { text: 'Submit' }, confidence: 'high' }, mutating: true },
+      { id: 'step-2', type: 'type', label: 'Email', target: { semantic: { label: 'Email' }, confidence: 'high' }, value: '${LOGIN_EMAIL}' },
+      { id: 'step-3', type: 'click', label: 'Submit form', target: { semantic: { text: 'Submit' }, confidence: 'high' }, mutating: true },
       { id: 'step-4', type: 'wait', ms: 1234 },
     ],
     evidence: {},
   });
 
   assert.match(script, /siteflow --json browser open 'https:\/\/example.com\/'/);
-  assert.match(script, /--value '\$\{LOGIN_EMAIL\}'/);
+  assert.match(script, /--value "\$\{LOGIN_EMAIL\}"/);
+  assert.match(script, /# step-2: type - Email/);
   assert.match(script, /siteflow --json eval 'new Promise\(resolve => setTimeout\(resolve, 1234\)\)'/);
-  assert.match(script, /MUTATING step-3/);
+  assert.match(script, /# MUTATING step-3: Submit form/);
 });
 
 test('exportWorkflowCli rejects placeholder-only targets instead of selector fallbacks', async () => {
