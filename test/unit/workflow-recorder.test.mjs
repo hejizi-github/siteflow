@@ -321,10 +321,28 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
   });
 
   assert.match(script, /siteflow --json browser open 'https:\/\/example.com\/'/);
-  assert.match(script, /--value "\$\{LOGIN_EMAIL\}"/);
+  assert.match(script, /--value '\$\{LOGIN_EMAIL\}'/);
   assert.match(script, /# step-2: type - Email/);
   assert.match(script, /siteflow --json eval 'new Promise\(resolve => setTimeout\(resolve, 1234\)\)'/);
   assert.match(script, /# MUTATING step-3: Submit form/);
+});
+
+test('exportWorkflowCli expands exact typed variables only when declared', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const target = { semantic: { label: 'Email' }, confidence: 'high' };
+
+  const undeclaredScript = exportWorkflowCli(validWorkflow({
+    variables: [],
+    steps: [{ id: 'step-1', type: 'type', target, value: '${LOGIN_EMAIL}' }],
+  }));
+  const declaredScript = exportWorkflowCli(validWorkflow({
+    variables: [{ name: 'LOGIN_EMAIL', source: 'input', sensitive: false, required: true }],
+    steps: [{ id: 'step-1', type: 'type', target, value: '${LOGIN_EMAIL}' }],
+  }));
+
+  assert.match(undeclaredScript, /--value '\$\{LOGIN_EMAIL\}'/);
+  assert.doesNotMatch(undeclaredScript, /--value "\$\{LOGIN_EMAIL\}"/);
+  assert.match(declaredScript, /--value "\$\{LOGIN_EMAIL\}"/);
 });
 
 test('exportWorkflowCli emits workflow startUrl before recorded steps without initial open', async () => {
@@ -353,6 +371,23 @@ test('exportWorkflowCli does not duplicate workflow startUrl when first step is 
 
   const openCommand = "siteflow --json browser open 'https://example.com/'";
   assert.equal(script.split(openCommand).length - 1, 1);
+});
+
+test('exportWorkflowCli prepends workflow startUrl when first open goes elsewhere', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://start.example/',
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://elsewhere.example/' },
+      { id: 'step-2', type: 'wait', ms: 25 },
+    ],
+  }));
+
+  const startOpenCommand = "siteflow --json browser open 'https://start.example/'";
+  const firstStepOpenCommand = "siteflow --json browser open 'https://elsewhere.example/'";
+  assert.ok(script.includes(startOpenCommand));
+  assert.ok(script.includes(firstStepOpenCommand));
+  assert.ok(script.indexOf(startOpenCommand) < script.indexOf(firstStepOpenCommand));
 });
 
 test('exportWorkflowCli sanitizes comment text for mutating steps', async () => {

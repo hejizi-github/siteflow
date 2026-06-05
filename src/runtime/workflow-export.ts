@@ -5,8 +5,9 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function shellQuoteTypedValue(value: string): string {
-  if (/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) return `"${value}"`;
+function shellQuoteTypedValue(value: string, declaredVariables: ReadonlySet<string>): string {
+  const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(value);
+  if (match && declaredVariables.has(match[1])) return `"${value}"`;
   return shellQuote(value);
 }
 
@@ -98,7 +99,7 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
   return args;
 }
 
-function stepCommand(step: WorkflowStep): string {
+function stepCommand(step: WorkflowStep, declaredVariables: ReadonlySet<string>): string {
   switch (step.type) {
     case 'open':
       return `siteflow --json browser open ${shellQuote(step.url)}`;
@@ -108,7 +109,7 @@ function stepCommand(step: WorkflowStep): string {
       return args.join(' ');
     }
     case 'type': {
-      const args = ['siteflow', '--json', 'browser', 'type', ...targetArgs(step.target, 'type'), '--value', shellQuoteTypedValue(step.value)];
+      const args = ['siteflow', '--json', 'browser', 'type', ...targetArgs(step.target, 'type'), '--value', shellQuoteTypedValue(step.value, declaredVariables)];
       if (step.clear === false) args.push('--no-clear');
       if (step.pressEnter) args.push('--enter');
       return args.join(' ');
@@ -143,15 +144,16 @@ export function exportWorkflowCli(workflow: SiteflowWorkflow): string {
     `# Workflow createdAt: ${workflow.createdAt}`,
     '',
   ];
+  const declaredVariables = new Set(workflow.variables.map(variable => variable.name));
 
-  if (workflow.startUrl && workflow.steps[0]?.type !== 'open') {
+  if (workflow.startUrl && (workflow.steps[0]?.type !== 'open' || workflow.steps[0].url !== workflow.startUrl)) {
     lines.push(`siteflow --json browser open ${shellQuote(workflow.startUrl)}`);
   }
 
   for (const step of workflow.steps) {
     const comment = stepComment(step);
     if (comment) lines.push(comment);
-    lines.push(stepCommand(step));
+    lines.push(stepCommand(step, declaredVariables));
   }
 
   return `${lines.join('\n')}\n`;
