@@ -504,7 +504,7 @@ export function recorderInjectionSource(): string {
   }, true);
 
   function recordValueEvent(event) {
-    if (event.type === 'change') flushPendingScroll();
+    flushPendingScroll();
     const info = controlInfoFor(event.target);
     if (info.unsupported) {
       record(basePayload('unsupported', targetFor(info.element || event.target)));

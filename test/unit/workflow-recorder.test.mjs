@@ -28,9 +28,13 @@ function fakeRecordedElement(overrides = {}) {
 }
 
 async function recordFixturePayloads(element, type, eventOverrides = {}) {
+  const { scrollBeforeEvent, ...eventPayloadOverrides } = eventOverrides;
   const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
   const payloads = [];
   const listeners = {};
+  const windowListeners = {};
+  let nextTimer = 1;
+  const activeTimers = new Set();
   const window = {
     __siteflowRecorderInstalled: false,
     __siteflowRecordEvent: async (payload) => {
@@ -39,7 +43,18 @@ async function recordFixturePayloads(element, type, eventOverrides = {}) {
     location: { href: 'https://example.test/form' },
     scrollX: 0,
     scrollY: 0,
-    addEventListener: () => {},
+    addEventListener: (eventType, handler) => {
+      windowListeners[eventType] = handler;
+    },
+    setTimeout: () => {
+      const timer = nextTimer;
+      nextTimer += 1;
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => {
+      activeTimers.delete(timer);
+    },
   };
   const document = {
     title: 'Form',
@@ -58,7 +73,12 @@ async function recordFixturePayloads(element, type, eventOverrides = {}) {
   });
 
   runInContext(recorderInjectionSource(), context);
-  listeners[type]({ type, target: element, ...eventOverrides });
+  if (scrollBeforeEvent) {
+    window.scrollX = scrollBeforeEvent.x ?? window.scrollX;
+    window.scrollY = scrollBeforeEvent.y ?? window.scrollY;
+    windowListeners.scroll();
+  }
+  listeners[type]({ type, target: element, ...eventPayloadOverrides });
   return payloads;
 }
 
@@ -1369,6 +1389,23 @@ test('recorder injection exposes reset and flushes scroll before state-changing 
   assert.match(source, /document\.addEventListener\('click',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(/);
   assert.match(source, /function recordValueEvent\(event\) \{[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(payload\);/);
   assert.match(source, /document\.addEventListener\('keydown',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(\{/);
+});
+
+test('recorder input flushes pending scroll before recording value', async () => {
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    id: 'search',
+    value: 'hello',
+    getAttribute: (name) => (name === 'type' ? 'text' : undefined),
+  }));
+
+  const payloads = await recordFixturePayloads(input, 'input', { scrollBeforeEvent: { x: 0, y: 120 } });
+
+  assert.deepEqual(payloads.map((payload) => payload.type), ['scroll', 'input']);
+  assert.equal(payloads[0].deltaX, 0);
+  assert.equal(payloads[0].deltaY, 120);
+  assert.equal(payloads[1].value, 'hello');
 });
 
 test('startRecorderSession resets installed recorder state before returning active session', async () => {
