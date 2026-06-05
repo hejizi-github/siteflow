@@ -8,6 +8,11 @@ import {
   href,
   text,
 } from '../../dist/sites/probes/selector-runtime.js';
+import {
+  youtubeComments,
+  youtubeScrollToComments,
+  youtubeSearchResults,
+} from '../../dist/sites/probes/youtube.js';
 
 test('createExtractListExpression includes selectors, attributes, and bounded limit', async () => {
   const expression = createExtractListExpression({
@@ -149,6 +154,79 @@ test('createExtractListExpression requires own fields only', () => {
   const result = Function('document', `return ${expression}`)(document);
 
   assert.deepEqual(result, { rows: [], count: 0 });
+});
+
+test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
+  const result = await youtubeSearchResults({
+    profile: 'default',
+    evaluate: async () => ({ value: {
+      rows: [
+        { title: 'First', href: 'https://www.youtube.com/watch?v=abc123&feature=share', channel: 'Chan A', metadata: '1K views' },
+        { title: 'Duplicate', href: '/watch?v=abc123', channel: 'Chan A', metadata: '1K views' },
+        { title: 'Second', href: 'https://youtu.be/def456', channel: 'Chan B', metadata: '2K views' },
+        { title: 'No id', href: 'https://www.youtube.com/results?search_query=x', channel: 'Chan C', metadata: '3K views' },
+      ],
+      count: 4,
+    } }),
+  }, { limit: 5 });
+
+  assert.deepEqual(result.videos, [
+    { id: 'abc123', title: 'First', href: 'https://www.youtube.com/watch?v=abc123&feature=share', channel: 'Chan A', metadata: '1K views' },
+    { id: 'def456', title: 'Second', href: 'https://youtu.be/def456', channel: 'Chan B', metadata: '2K views' },
+  ]);
+  assert.deepEqual(result.evidence, {
+    count: 4,
+    limit: 5,
+    root: 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title',
+  });
+  assert.equal(JSON.stringify(result.evidence).includes('First'), false);
+});
+
+test('youtubeComments returns visible comments and small evidence', async () => {
+  const result = await youtubeComments({
+    profile: 'default',
+    evaluate: async () => ({ value: {
+      rows: [
+        { author: 'A', text: 'Useful comment', likes: '12', time: '1 day ago' },
+        { author: 'B', text: 'Another comment', likes: '', time: '2 days ago' },
+      ],
+      count: 2,
+    } }),
+  }, { limit: 2 });
+
+  assert.deepEqual(result.comments, [
+    { author: 'A', text: 'Useful comment', likes: '12', time: '1 day ago' },
+    { author: 'B', text: 'Another comment', likes: '', time: '2 days ago' },
+  ]);
+  assert.deepEqual(result.evidence, {
+    count: 2,
+    limit: 2,
+    root: 'ytd-comment-thread-renderer',
+  });
+  assert.equal(JSON.stringify(result.evidence).includes('Useful comment'), false);
+});
+
+test('youtubeScrollToComments runs page scroll probe with small evidence', async () => {
+  const calls = [];
+  const result = await youtubeScrollToComments({
+    profile: 'default',
+    pageId: 9,
+    evaluate: async (profile, expression, pageId) => {
+      calls.push({ profile, expression, pageId });
+      return { value: { y: 1200, height: 2400 } };
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].profile, 'default');
+  assert.equal(calls[0].pageId, 9);
+  assert.equal(calls[0].expression.includes('scrollTo'), true);
+  assert.deepEqual(result, {
+    y: 1200,
+    height: 2400,
+    pageId: 9,
+    scrolled: true,
+  });
 });
 
 function fakeDocument(roots) {
