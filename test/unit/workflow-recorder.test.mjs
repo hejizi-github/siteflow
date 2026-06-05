@@ -787,6 +787,87 @@ test('normalizeRecordedEvents converts select change events to select steps', as
   ]);
 });
 
+test('recorded targets omit Phase 1 unsupported semantic fields', async () => {
+  const button = fakeRecordedElement({
+    id: 'submit',
+    innerText: 'Submit',
+    textContent: 'Submit',
+    getAttribute: (name) => {
+      if (name === 'role') return 'button';
+      if (name === 'placeholder') return 'Search docs';
+      if (name === 'aria-label') return 'Submit form';
+      return undefined;
+    },
+  });
+
+  const event = await recordFixtureEvent(button, 'click');
+
+  assert.equal(event.target.semantic.aria, 'Submit form');
+  assert.equal(event.target.semantic.text, 'Submit');
+  assert.equal(event.target.semantic.role, undefined);
+  assert.equal(event.target.semantic.placeholder, undefined);
+  assert.equal(event.target.structural.selector, '#submit');
+});
+
+test('startRecorderSession reuses page binding and routes events to active session', async () => {
+  const { startRecorderSession, stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-binding-'));
+  try {
+    const page = {
+      binding: undefined,
+      bindingCalls: 0,
+      currentUrl: 'https://example.test/start',
+      async exposeBinding(name, callback) {
+        assert.equal(name, '__siteflowRecordEvent');
+        if (this.binding) throw new Error('duplicate binding');
+        this.binding = callback;
+        this.bindingCalls += 1;
+      },
+      async addInitScript() {},
+      async evaluate() {},
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const first = await startRecorderSession(page, 1, { out: path.join(temp, 'first.json') });
+    assert.equal(page.bindingCalls, 1);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'click',
+      target: { semantic: { text: 'First' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+    assert.equal(first.events.length, 1);
+
+    const second = await startRecorderSession(page, 1, { out: path.join(temp, 'second.json') });
+    assert.equal(page.bindingCalls, 1);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'Second' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+
+    assert.equal(first.events.length, 1);
+    assert.equal(second.events.length, 1);
+
+    await stopRecorderSession(second);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:03.000Z',
+      type: 'click',
+      target: { semantic: { text: 'After stop' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+    assert.equal(second.events.length, 1);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('recorded contenteditable input with semantic label normalizes to type step with visible text value', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const editor = fakeRecordedElement({

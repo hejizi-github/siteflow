@@ -40,6 +40,10 @@ function isSensitiveRecordedEvent(event: RecordedEvent): boolean {
     || hasSensitiveMarker(structural?.selector);
 }
 const stoppedSessions = new WeakSet<RecorderSession>();
+const activeRecorderSessions = new WeakMap<Page, RecorderSession | null>();
+const pagesWithRecorderBinding = new WeakSet<Page>();
+const recorderSessionPages = new WeakMap<RecorderSession, Page>();
+
 
 function nextStepId(steps: WorkflowStep[]): string {
   return `step-${steps.length + 1}`;
@@ -321,15 +325,11 @@ export function recorderInjectionSource(): string {
     const text = control ? selectedOptionText : normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
-    const placeholder = element.getAttribute('placeholder') || undefined;
-    const role = element.getAttribute('role') || undefined;
     return {
       semantic: {
-        ...(role ? { role } : {}),
         ...(aria ? { aria } : {}),
         ...(label ? { label } : {}),
         ...(text ? { text } : {}),
-        ...(placeholder ? { placeholder } : {}),
       },
       structural: {
         ...(selector ? { selector } : {}),
@@ -437,9 +437,15 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
     events: [],
   };
 
-  await page.exposeBinding('__siteflowRecordEvent', (_source, event: unknown) => {
-    if (!stoppedSessions.has(session) && isRecordedEvent(event)) session.events.push(event);
-  });
+  if (!pagesWithRecorderBinding.has(page)) {
+    await page.exposeBinding('__siteflowRecordEvent', (_source, event: unknown) => {
+      const activeSession = activeRecorderSessions.get(page);
+      if (activeSession && !stoppedSessions.has(activeSession) && isRecordedEvent(event)) activeSession.events.push(event);
+    });
+    pagesWithRecorderBinding.add(page);
+  }
+  activeRecorderSessions.set(page, session);
+  recorderSessionPages.set(session, page);
   const source = recorderInjectionSource();
   await page.addInitScript(source);
   await page.evaluate(source);
@@ -462,6 +468,9 @@ export function recorderStatus(session: RecorderSession | null): RecorderStatus 
 
 export async function stopRecorderSession(session: RecorderSession): Promise<RecorderStopResult> {
   stoppedSessions.add(session);
+  const page = recorderSessionPages.get(session);
+  if (page && activeRecorderSessions.get(page) === session) activeRecorderSessions.set(page, null);
+  recorderSessionPages.delete(session);
   const normalized = normalizeRecordedEventsWithStats({ startUrl: session.startUrl, events: session.events });
   const workflow: SiteflowWorkflow = {
     version: 1,
