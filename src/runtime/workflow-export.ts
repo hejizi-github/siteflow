@@ -10,8 +10,13 @@ function shellQuoteTypedValue(value: string): string {
   return shellQuote(value);
 }
 
-function commentLabel(label: string): string {
-  return label.replaceAll('\r', ' ').replaceAll('\n', ' ');
+function sanitizeCommentText(value: string): string {
+  return value.replace(/[\u0000-\u001F\u007F]/g, ' ');
+}
+
+function safeScreenshotBasename(id: string): string {
+  const basename = id.replace(/[^A-Za-z0-9._-]/g, '_');
+  return basename.length > 0 ? basename : 'screenshot';
 }
 
 function pushArg(args: string[], name: string, value: string): void {
@@ -54,6 +59,10 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
   const semantic = target.semantic;
   const structural = target.structural;
   const geometry = target.geometry;
+
+  if (structural?.nth !== undefined && (!Number.isInteger(structural.nth) || structural.nth < 0)) {
+    throw unsupportedTarget(command, target);
+  }
 
   if (command === 'select' && structural?.nth !== undefined) {
     throw unsupportedTarget(command, target);
@@ -103,7 +112,7 @@ function stepCommand(step: WorkflowStep): string {
       return `siteflow --json eval ${shellQuote(waitExpression(step))}`;
     }
     case 'screenshot': {
-      const args = ['siteflow', '--json', 'browser', 'screenshot', '--out', shellQuote(`${step.id}.png`)];
+      const args = ['siteflow', '--json', 'browser', 'screenshot', '--out', shellQuote(`${safeScreenshotBasename(step.id)}.png`)];
       if (step.fullPage !== false) args.push('--full-page');
       return args.join(' ');
     }
@@ -112,9 +121,9 @@ function stepCommand(step: WorkflowStep): string {
 
 function stepComment(step: WorkflowStep): string | undefined {
   if (step.mutating) {
-    return step.label ? `# MUTATING ${step.id}: ${commentLabel(step.label)}` : `# MUTATING ${step.id}`;
+    return step.label ? `# MUTATING ${sanitizeCommentText(step.id)}: ${sanitizeCommentText(step.label)}` : `# MUTATING ${sanitizeCommentText(step.id)}`;
   }
-  if (step.label) return `# ${step.id}: ${step.type} - ${commentLabel(step.label)}`;
+  if (step.label) return `# ${sanitizeCommentText(step.id)}: ${step.type} - ${sanitizeCommentText(step.label)}`;
   return undefined;
 }
 

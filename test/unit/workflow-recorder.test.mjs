@@ -327,6 +327,51 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
   assert.match(script, /# MUTATING step-3: Submit form/);
 });
 
+test('exportWorkflowCli sanitizes comment text for mutating steps', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      {
+        id: 'step-1\necho pwned',
+        type: 'click',
+        label: 'Submit\r\necho label-pwned\u0007',
+        target: { semantic: { text: 'Submit' }, confidence: 'high' },
+        mutating: true,
+      },
+    ],
+  }));
+
+  assert.match(script, /# MUTATING step-1 echo pwned: Submit  echo label-pwned /);
+  assert.doesNotMatch(script, /^echo (?:pwned|label-pwned)$/m);
+});
+
+test('exportWorkflowCli writes screenshots to a safe local filename', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [{ id: '../outside/path', type: 'screenshot' }],
+  }));
+
+  assert.match(script, /--out '\.\._outside_path\.png'/);
+  assert.doesNotMatch(script, /\.\.\//);
+});
+
+test('exportWorkflowCli rejects non-integer structural nth', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { selector: '#submit', nth: 1.5 }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
 test('exportWorkflowCli rejects placeholder-only targets instead of selector fallbacks', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
 
