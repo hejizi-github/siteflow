@@ -37,7 +37,7 @@ export {
   siteReceipt,
 } from './http-utils.js';
 export type { NetworkBody, NetworkEntry, PageInfo, RequestReplayResult } from '../shared/types.js';
-export type { SiteAdapter, SiteCommandContext, SiteCommandSpec, SiteReceipt } from './types.js';
+export type { SiteAdapter, SiteCommandContext, SiteCommandSpec, SiteReceipt, SiteStepReceipt } from './types.js';
 export { runSiteCommand } from './runner.js';
 
 export async function ensureSitePage(profile: string, url: string, expectedUrlPart?: string): Promise<PageInfo> {

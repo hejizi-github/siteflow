@@ -1,4 +1,4 @@
-import type { SiteCommandContext, SiteReceipt, SiteStepReceipt } from '../types.js';
+import type { SiteCommandContext, SiteReceipt, SiteStepReceipt } from '../capabilities.js';
 
 export type FlowStepEvidence = Record<string, unknown>;
 
