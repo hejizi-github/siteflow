@@ -1242,6 +1242,21 @@ test('unsupported checkbox radio and file input clicks become unsupported events
   }
 });
 
+test('dragstart and drop record unsupported events with target source', async () => {
+  for (const type of ['dragstart', 'drop']) {
+    const item = fakeRecordedElement({
+      localName: 'div',
+      tagName: 'DIV',
+      id: 'draggable-item',
+    });
+
+    const payloads = await recordFixturePayloads(item, type);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].target.structural.selector, '#draggable-item');
+  }
+});
+
 test('unsupported event removes immediately preceding click on same target', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-unsupported-'));
@@ -1388,6 +1403,32 @@ test('unsupported checkbox radio and file events count unsupported on stop', asy
   }
 });
 
+test('drag and drop unsupported events count unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-drag-drop-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-drag-drop-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'unsupported', target: { structural: { selector: '#draggable-item' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: { structural: { selector: '#drop-zone' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('email and tel inputs are recorded as sensitive and counted unsupported on stop', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-contact-sensitive-'));
@@ -1502,6 +1543,43 @@ test('stopRecorderSession skips sensitive input and change events and counts the
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
+});
+
+test('form-associated Enter keydown records mutating and normalizes to mutating pressEnter', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'text',
+    form: {},
+    getAttribute: (name) => {
+      if (name === 'type') return 'text';
+      if (name === 'name') return 'q';
+      return undefined;
+    },
+  }));
+
+  const event = await recordFixtureEvent(input, 'keydown', { key: 'Enter' });
+  assert.equal(event.type, 'keydown');
+  assert.equal(event.control, 'input');
+  assert.equal(event.mutating, true);
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'type',
+      target: event.target,
+      value: '',
+      clear: false,
+      pressEnter: true,
+      mutating: true,
+    },
+  ]);
 });
 
 test('geometry-only Enter keydown is unsupported and not normalized to type', async () => {

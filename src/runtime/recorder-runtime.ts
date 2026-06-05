@@ -249,6 +249,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           value: '',
           clear: false,
           pressEnter: true,
+          ...(event.mutating === true ? { mutating: true } : {}),
         });
       } else {
         unsupportedEvents += 1;
@@ -363,6 +364,10 @@ export function recorderInjectionSource(): string {
       || hasMutatingMarker(element.getAttribute('aria-label'))
       || hasMutatingMarker(labelFor(element))
       || hasMutatingMarker(normalizedText(element.innerText || element.textContent || ''));
+  }
+
+  function hasFormSubmitIntent(element) {
+    return element instanceof HTMLInputElement && Boolean(element.form);
   }
 
 
@@ -506,13 +511,24 @@ export function recorderInjectionSource(): string {
       return;
     }
     if (event.key === 'Enter' && (info.control === 'textarea' || info.control === 'contenteditable')) return;
-    record({
+    const payload = {
       ...basePayload('keydown', targetFor(info.element || event.target, info.control)),
       key: event.key,
       ...(info.control ? { control: info.control } : {}),
       ...(info.sensitive ? { sensitive: true } : {}),
-    });
+    };
+    if (event.key === 'Enter' && info.control === 'input' && hasFormSubmitIntent(info.element)) payload.mutating = true;
+    record(payload);
   }, true);
+
+  function recordUnsupportedEvent(event) {
+    flushPendingScroll();
+    const info = controlInfoFor(event.target);
+    record(basePayload('unsupported', targetFor(info.element || event.target, info.control)));
+  }
+
+  document.addEventListener('dragstart', recordUnsupportedEvent, true);
+  document.addEventListener('drop', recordUnsupportedEvent, true);
 
 
   function flushPendingScroll() {
