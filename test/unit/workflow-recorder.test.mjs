@@ -327,6 +327,34 @@ test('exportWorkflowCli preserves variables and labels mutating steps', async ()
   assert.match(script, /# MUTATING step-3: Submit form/);
 });
 
+test('exportWorkflowCli emits workflow startUrl before recorded steps without initial open', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://start.example/path?x=1',
+    steps: [{ id: 'step-1', type: 'wait', ms: 25 }],
+  }));
+
+  const openCommand = "siteflow --json browser open 'https://start.example/path?x=1'";
+  const waitCommand = "siteflow --json eval 'new Promise(resolve => setTimeout(resolve, 25))'";
+  assert.ok(script.includes(openCommand));
+  assert.ok(script.includes(waitCommand));
+  assert.ok(script.indexOf(openCommand) < script.indexOf(waitCommand));
+});
+
+test('exportWorkflowCli does not duplicate workflow startUrl when first step is open', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://example.com/',
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'wait', ms: 25 },
+    ],
+  }));
+
+  const openCommand = "siteflow --json browser open 'https://example.com/'";
+  assert.equal(script.split(openCommand).length - 1, 1);
+});
+
 test('exportWorkflowCli sanitizes comment text for mutating steps', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
   const script = exportWorkflowCli(validWorkflow({
@@ -400,6 +428,45 @@ test('exportWorkflowCli rejects role-only click targets instead of selector fall
           id: 'step-1',
           type: 'click',
           target: { semantic: { role: 'button' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects role+text targets instead of dropping role disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { semantic: { role: 'button', text: 'Submit' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects placeholder+selector targets instead of dropping placeholder disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'type',
+          target: {
+            semantic: { placeholder: 'Search docs' },
+            structural: { selector: '#search' },
+            confidence: 'high',
+          },
+          value: 'workflow',
         },
       ],
     })),

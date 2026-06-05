@@ -68,6 +68,10 @@ function targetArgs(target: RecordedTarget, command: 'click' | 'type' | 'select'
     throw unsupportedTarget(command, target);
   }
 
+  if (hasUnsupportedSemanticTarget(target)) {
+    throw unsupportedTarget(command, target);
+  }
+
   if (semantic?.text) {
     pushArg(args, command === 'select' ? '--combobox-text' : '--text', semantic.text);
   } else if (supportsAriaTarget(command) && semantic?.aria) {
@@ -134,6 +138,10 @@ export function exportWorkflowCli(workflow: SiteflowWorkflow): string {
     `# Workflow createdAt: ${workflow.createdAt}`,
     '',
   ];
+
+  if (workflow.startUrl && workflow.steps[0]?.type !== 'open') {
+    lines.push(`siteflow --json browser open ${shellQuote(workflow.startUrl)}`);
+  }
 
   for (const step of workflow.steps) {
     const comment = stepComment(step);
