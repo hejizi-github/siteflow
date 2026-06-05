@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { douyinTesting } from '../../dist/sites/douyin.js';
 import { twitterTesting } from '../../dist/sites/twitter.js';
 import { xhsTesting } from '../../dist/sites/xhs.js';
+import { youtubeTesting } from '../../dist/sites/youtube.js';
 import { createPageObservation } from '../../dist/runtime/page-observation.js';
 import { BrowserRuntime } from '../../dist/runtime/browser-runtime.js';
 
@@ -106,4 +107,58 @@ test('douyin auth detection treats creator login page as auth required', () => {
     douyinTesting.isAuthRequired(text, 'https://creator.douyin.com/creator-micro/content/upload'),
     true,
   );
+});
+
+test('youtube search proof returns step trace through injected deps', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 3, url: 'https://www.youtube.com/results?search_query=proof', title: 'YouTube Search' }),
+    sleep: async () => {},
+    youtubeSearchResults: async () => ({
+      videos: [
+        { id: 'abc123XYZ_1', title: 'Proof video', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: 'Proof', metadata: '1 view' },
+      ],
+      evidence: {
+        count: 1,
+        limit: 3,
+        requestedLimit: 1,
+        root: 'ytd-video-renderer, ytd-rich-item-renderer, a#video-title',
+      },
+    }),
+  };
+
+  const receipt = await youtubeTesting.runSearch({ profile: 'default' }, { keyword: 'proof', limit: '1' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'search');
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.videos.length, 1);
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_search_page', 'wait_for_search_results', 'extract_search_results']);
+});
+
+test('youtube comments proof returns step trace through injected deps', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 4, url: 'https://www.youtube.com/watch?v=abc123XYZ_1', title: 'Watch' }),
+    sleep: async () => {},
+    youtubeScrollToComments: async () => ({ pageId: 4, scrolled: true, y: 1200 }),
+    youtubeComments: async () => ({
+      comments: [
+        { author: 'A', text: 'Visible comment', likes: '1', time: 'today' },
+      ],
+      evidence: {
+        count: 1,
+        limit: 1,
+        root: 'ytd-comment-thread-renderer',
+      },
+    }),
+  };
+
+  const receipt = await youtubeTesting.runComments({ profile: 'default' }, { target: 'abc123XYZ_1', limit: '1' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'comments');
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.comments.length, 1);
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_video_page', 'wait_for_watch_page', 'scroll_to_comments', 'extract_comments']);
 });

@@ -3,6 +3,9 @@ import * as path from 'node:path';
 import type { Command } from 'commander';
 import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
+import { defineSiteFlow, flowEvidence } from './flow/define-flow.js';
+import { youtubeComments, youtubeScrollToComments, youtubeSearchResults } from './probes/youtube.js';
+import type { ProbePage } from './probes/selector-runtime.js';
 
 const SITE = 'youtube';
 
@@ -10,9 +13,51 @@ interface SearchOptions { keyword: string; limit?: string; pageId?: string }
 interface TargetOptions { target: string; pageId?: string }
 interface CommentsOptions extends TargetOptions { limit?: string }
 interface TranscriptOptions extends TargetOptions { out?: string }
+interface YouTubePageInfo {
+  pageId?: number;
+  url: string;
+  title: string;
+}
+
+interface YouTubeDeps {
+  openOrNavigateSitePage(profile: string, url: string, pageIdValue?: string): Promise<YouTubePageInfo>;
+  sleep(ms: number): Promise<void>;
+  youtubeSearchResults(page: ProbePage, options: { limit: number }): Promise<{
+    videos: unknown[];
+    evidence: Record<string, unknown>;
+  }>;
+  youtubeComments(page: ProbePage, options: { limit: number }): Promise<{
+    comments: unknown[];
+    evidence: Record<string, unknown>;
+  }>;
+  youtubeScrollToComments(page: ProbePage): Promise<Record<string, unknown>>;
+}
+
+const defaultDeps: YouTubeDeps = {
+  openOrNavigateSitePage,
+  sleep,
+  youtubeSearchResults,
+  youtubeComments,
+  youtubeScrollToComments,
+};
 
 function videoId(target: string): string | undefined {
   return target.match(/[?&]v=([\w-]{6,})/)?.[1] || target.match(/youtu\.be\/([\w-]{6,})/)?.[1] || (/^[\w-]{6,}$/.test(target) ? target : undefined);
+}
+
+function pageEvidence(page: YouTubePageInfo): Record<string, unknown> {
+  return {
+    pageId: page.pageId,
+    url: page.url,
+    title: page.title,
+  };
+}
+
+function smallScrollEvidence(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(typeof value.pageId === 'number' ? { pageId: value.pageId } : {}),
+    ...(typeof value.scrolled === 'boolean' ? { scrolled: value.scrolled } : {}),
+  };
 }
 
 async function fetchCaptionText(url: string): Promise<string> {
@@ -28,26 +73,37 @@ async function fetchCaptionText(url: string): Promise<string> {
   return text;
 }
 
-async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promise<SiteReceipt> {
+async function runSearch(ctx: SiteCommandContext, options: SearchOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
   const limit = clampInt(options.limit, 20, 1, 50);
-  const page = await openOrNavigateSitePage(ctx.profile, `https://www.youtube.com/results?search_query=${encodeURIComponent(options.keyword)}`, options.pageId);
-  await sleep(2200);
-  const result = await evaluateSiteExpression(ctx.profile, `(() => {
-    const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
-    const videos = [];
-    const seen = new Set();
-    for (const row of Array.from(document.querySelectorAll('ytd-video-renderer, ytd-rich-item-renderer, a#video-title'))) {
-      const link = row.matches?.('a#video-title') ? row : row.querySelector?.('a#video-title');
-      const href = link?.href;
-      const id = href && new URL(href).searchParams.get('v');
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      videos.push({ id, title: clean(link.textContent), href, text: clean(row.innerText || row.textContent).slice(0, 500) });
-      if (videos.length >= ${JSON.stringify(limit)}) break;
-    }
-    return { url: location.href, title: document.title, videos };
-  })()`);
-  return siteReceipt(SITE, 'search', { keyword: options.keyword, pageId: page.pageId, limit, ...(result.value as Record<string, unknown>), sideEffects: [] });
+  return defineSiteFlow(ctx, SITE, 'search')
+    .step('open_search_page', async () => {
+      const page = await deps.openOrNavigateSitePage(ctx.profile, `https://www.youtube.com/results?search_query=${encodeURIComponent(options.keyword)}`, options.pageId);
+      return flowEvidence(page, pageEvidence(page));
+    })
+    .step('wait_for_search_results', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_search_page');
+      const waitedMs = 2200;
+      await deps.sleep(waitedMs);
+      return flowEvidence({ pageId: page.pageId, waitedMs }, { pageId: page.pageId, waitedMs });
+    })
+    .step('extract_search_results', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_search_page');
+      const result = await deps.youtubeSearchResults({ profile: ctx.profile, pageId: page.pageId }, { limit });
+      return flowEvidence({ videos: result.videos }, result.evidence);
+    })
+    .receipt(flow => {
+      const page = flow.get<YouTubePageInfo>('open_search_page');
+      const result = flow.get<{ videos: unknown[] }>('extract_search_results');
+      return siteReceipt(SITE, 'search', {
+        keyword: options.keyword,
+        pageId: page.pageId,
+        limit,
+        url: page.url,
+        title: page.title,
+        videos: result.videos,
+        sideEffects: [],
+      });
+    });
 }
 
 async function runVideo(ctx: SiteCommandContext, options: TargetOptions): Promise<SiteReceipt> {
@@ -90,27 +146,45 @@ async function runChannel(ctx: SiteCommandContext, options: TargetOptions): Prom
   return siteReceipt(SITE, 'channel', { target: options.target, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
 }
 
-async function runComments(ctx: SiteCommandContext, options: CommentsOptions): Promise<SiteReceipt> {
+async function runComments(ctx: SiteCommandContext, options: CommentsOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
   const id = videoId(options.target);
   const limit = clampInt(options.limit, 50, 1, 200);
-  const page = await openOrNavigateSitePage(ctx.profile, id ? `https://www.youtube.com/watch?v=${id}` : options.target, options.pageId);
-  await sleep(1500);
-  await evaluateSiteExpression(ctx.profile, `window.scrollTo(0, Math.max(document.body.scrollHeight * 0.65, 1200))`);
-  await sleep(2500);
-  const result = await evaluateSiteExpression(ctx.profile, `(() => {
-    const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
-    return {
-      url: location.href,
-      title: document.title,
-      comments: Array.from(document.querySelectorAll('ytd-comment-thread-renderer')).slice(0, ${JSON.stringify(limit)}).map(row => ({
-        author: clean(row.querySelector('#author-text')?.textContent),
-        text: clean(row.querySelector('#content-text')?.textContent),
-        likes: clean(row.querySelector('#vote-count-middle')?.textContent),
-        time: clean(row.querySelector('.published-time-text, #published-time-text')?.textContent)
-      })).filter(c => c.text)
-    };
-  })()`);
-  return siteReceipt(SITE, 'comments', { target: options.target, id, pageId: page.pageId, limit, ...(result.value as Record<string, unknown>), sideEffects: [] });
+  return defineSiteFlow(ctx, SITE, 'comments')
+    .step('open_video_page', async () => {
+      const page = await deps.openOrNavigateSitePage(ctx.profile, id ? `https://www.youtube.com/watch?v=${id}` : options.target, options.pageId);
+      return flowEvidence(page, pageEvidence(page));
+    })
+    .step('wait_for_watch_page', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const waitedMs = 1500;
+      await deps.sleep(waitedMs);
+      return flowEvidence({ pageId: page.pageId, waitedMs }, { pageId: page.pageId, waitedMs });
+    })
+    .step('scroll_to_comments', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const result = await deps.youtubeScrollToComments({ profile: ctx.profile, pageId: page.pageId });
+      await deps.sleep(2500);
+      return flowEvidence(result, smallScrollEvidence(result));
+    })
+    .step('extract_comments', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const result = await deps.youtubeComments({ profile: ctx.profile, pageId: page.pageId }, { limit });
+      return flowEvidence({ comments: result.comments }, result.evidence);
+    })
+    .receipt(flow => {
+      const page = flow.get<YouTubePageInfo>('open_video_page');
+      const result = flow.get<{ comments: unknown[] }>('extract_comments');
+      return siteReceipt(SITE, 'comments', {
+        target: options.target,
+        id,
+        pageId: page.pageId,
+        limit,
+        url: page.url,
+        title: page.title,
+        comments: result.comments,
+        sideEffects: [],
+      });
+    });
 }
 
 async function runTranscript(ctx: SiteCommandContext, options: TranscriptOptions): Promise<SiteReceipt> {
@@ -201,4 +275,10 @@ export const youtubeAdapter: SiteAdapter = {
       });
     } },
   ],
+};
+
+export const youtubeTesting = {
+  runSearch,
+  runComments,
+  deps: defaultDeps,
 };
