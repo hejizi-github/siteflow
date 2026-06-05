@@ -18,6 +18,19 @@ export interface SiteAdapter {
   commands: SiteCommandSpec[];
 }
 
+export interface SiteStepReceipt {
+  name: string;
+  ok: boolean;
+  state: string;
+  startedAt: string;
+  endedAt: string;
+  evidence?: Record<string, unknown>;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export interface SiteReceipt {
   site: string;
   command: string;
@@ -33,5 +46,6 @@ export interface SiteReceipt {
     code: string;
     message: string;
   }>;
+  steps?: SiteStepReceipt[];
   next?: string[];
 }
