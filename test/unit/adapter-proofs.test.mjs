@@ -116,7 +116,7 @@ test('youtube search proof returns step trace through injected deps', async () =
     sleep: async () => {},
     youtubeSearchResults: async () => ({
       videos: [
-        { id: 'abc123XYZ_1', title: 'Proof video', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: 'Proof', metadata: '1 view' },
+        { id: 'abc123XYZ_1', title: 'Proof video', href: 'https://www.youtube.com/watch?v=abc123XYZ_1', channel: 'Proof', metadata: '1 view', text: 'Proof video visible row text' },
       ],
       evidence: {
         count: 1,
@@ -133,7 +133,11 @@ test('youtube search proof returns step trace through injected deps', async () =
   assert.equal(receipt.command, 'search');
   assert.equal(receipt.ok, true);
   assert.equal(receipt.observations.videos.length, 1);
+  assert.equal(receipt.observations.videos[0].text, 'Proof video visible row text');
   assert.deepEqual(receipt.steps.map(step => step.name), ['open_search_page', 'wait_for_search_results', 'extract_search_results']);
+  const extractEvidence = receipt.steps.find(step => step.name === 'extract_search_results')?.evidence;
+  assert.equal(JSON.stringify(extractEvidence).includes('Proof video visible row text'), false);
+  assert.equal(JSON.stringify(extractEvidence).includes('Proof video'), false);
 });
 
 test('youtube comments proof returns step trace through injected deps', async () => {

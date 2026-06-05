@@ -182,18 +182,18 @@ test('youtubeSearchResults maps rows to deduped videos with ids', async () => {
     profile: 'default',
     evaluate: async () => ({ value: {
       rows: [
-        { title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views' },
-        { title: 'Duplicate', href: '/watch?v=abc123XYZ_1', channel: 'Chan A', metadata: '1K views' },
-        { title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views' },
-        { title: 'No id', href: 'https://www.youtube.com/results?search_query=x', channel: 'Chan C', metadata: '3K views' },
+        { title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views', text: 'First video visible row text' },
+        { title: 'Duplicate', href: '/watch?v=abc123XYZ_1', channel: 'Chan A', metadata: '1K views', text: 'Duplicate visible row text' },
+        { title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views', text: 'Second video visible row text' },
+        { title: 'No id', href: 'https://www.youtube.com/results?search_query=x', channel: 'Chan C', metadata: '3K views', text: 'No id visible row text' },
       ],
       count: 4,
     } }),
   }, { limit: 5 });
 
   assert.deepEqual(result.videos, [
-    { id: 'abc123XYZ_1', title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views' },
-    { id: 'def456XYZ_2', title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views' },
+    { id: 'abc123XYZ_1', title: 'First', href: 'https://www.youtube.com/watch?v=abc123XYZ_1&feature=share', channel: 'Chan A', metadata: '1K views', text: 'First video visible row text' },
+    { id: 'def456XYZ_2', title: 'Second', href: 'https://youtu.be/def456XYZ_2', channel: 'Chan B', metadata: '2K views', text: 'Second video visible row text' },
   ]);
   assert.deepEqual(result.evidence, {
     count: 4,

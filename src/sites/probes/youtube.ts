@@ -15,6 +15,7 @@ export interface YouTubeVideo {
   href: string;
   channel: string;
   metadata: string;
+  text?: string;
 }
 
 export interface YouTubeComment {
@@ -36,6 +37,7 @@ export async function youtubeSearchResults(page: ProbePage, options: YouTubeProb
       href: href('a#video-title, a[href*="watch"], a[href^="/watch"]'),
       channel: text('ytd-channel-name, #channel-name', { max: 120 }),
       metadata: text('#metadata-line, ytd-video-meta-block', { max: 200 }),
+      text: text(youtubeSearchRoot, { max: 500 }),
     },
   });
   const seen = new Set<string>();
@@ -51,6 +53,7 @@ export async function youtubeSearchResults(page: ProbePage, options: YouTubeProb
       href: hrefValue,
       channel: stringValue(row.channel),
       metadata: stringValue(row.metadata),
+      text: stringValue(row.text),
     });
   }
   return {
