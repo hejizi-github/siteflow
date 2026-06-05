@@ -48,8 +48,6 @@ function videoId(target: string): string | undefined {
 function pageEvidence(page: YouTubePageInfo): Record<string, unknown> {
   return {
     pageId: page.pageId,
-    url: page.url,
-    title: page.title,
   };
 }
 

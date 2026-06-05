@@ -133,11 +133,13 @@ test('youtube search proof returns step trace through injected deps', async () =
   assert.equal(receipt.command, 'search');
   assert.equal(receipt.ok, true);
   assert.equal(receipt.observations.videos.length, 1);
+  assert.equal(receipt.observations.title, 'YouTube Search');
   assert.equal(receipt.observations.videos[0].text, 'Proof video visible row text');
   assert.deepEqual(receipt.steps.map(step => step.name), ['open_search_page', 'wait_for_search_results', 'extract_search_results']);
-  const extractEvidence = receipt.steps.find(step => step.name === 'extract_search_results')?.evidence;
-  assert.equal(JSON.stringify(extractEvidence).includes('Proof video visible row text'), false);
-  assert.equal(JSON.stringify(extractEvidence).includes('Proof video'), false);
+  const stepTrace = JSON.stringify(receipt.steps);
+  assert.equal(stepTrace.includes('YouTube Search'), false);
+  assert.equal(stepTrace.includes('Proof video visible row text'), false);
+  assert.equal(stepTrace.includes('Proof video'), false);
 });
 
 test('youtube comments proof returns step trace through injected deps', async () => {
@@ -163,6 +165,10 @@ test('youtube comments proof returns step trace through injected deps', async ()
   assert.equal(receipt.site, 'youtube');
   assert.equal(receipt.command, 'comments');
   assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.title, 'Watch');
   assert.equal(receipt.observations.comments.length, 1);
   assert.deepEqual(receipt.steps.map(step => step.name), ['open_video_page', 'wait_for_watch_page', 'scroll_to_comments', 'extract_comments']);
+  const stepTrace = JSON.stringify(receipt.steps);
+  assert.equal(stepTrace.includes('Watch'), false);
+  assert.equal(stepTrace.includes('Visible comment'), false);
 });
