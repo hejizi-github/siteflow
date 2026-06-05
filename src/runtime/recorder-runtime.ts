@@ -376,6 +376,21 @@ export function recorderInjectionSource(): string {
     return normalizedText(option.label || option.innerText || option.textContent || option.value || '').slice(0, 120) || undefined;
   }
 
+  function optionDisplayTextFor(option) {
+    return normalizedText(option?.label || option?.innerText || option?.textContent || option?.value || '').slice(0, 120) || undefined;
+  }
+
+  function hasDuplicateSelectedOptionText(element, selectedText) {
+    if (!(element instanceof HTMLSelectElement) || !selectedText || !element.options) return false;
+    let matches = 0;
+    for (const option of Array.from(element.options)) {
+      if (optionDisplayTextFor(option) === selectedText) matches += 1;
+      if (matches > 1) return true;
+    }
+    return false;
+  }
+
+
   function actionInputTextFor(element) {
     if (!(element instanceof HTMLInputElement)) return undefined;
     const type = (element.getAttribute('type') || element.type || 'submit').toLowerCase();
@@ -466,8 +481,9 @@ export function recorderInjectionSource(): string {
     const labelControl = labelControlFor(element);
     const controlElement = labelControl || element;
     if (controlElement instanceof HTMLSelectElement) {
-      if (controlElement.multiple || isSensitiveControl(controlElement)) return { element: controlElement, unsupported: true };
+      if (controlElement.multiple || isSensitiveControl(controlElement)) return { element: controlElement, control: 'select', unsupported: true, omitOptionText: true };
       const option = selectedOptionTextFor(controlElement);
+      if (hasDuplicateSelectedOptionText(controlElement, option)) return { element: controlElement, control: 'select', unsupported: true, omitOptionText: true };
       return { element: controlElement, control: 'select', option };
     }
     if (controlElement instanceof HTMLTextAreaElement) return { element: controlElement, control: 'textarea', sensitive: isSensitiveControl(controlElement) };
@@ -482,7 +498,7 @@ export function recorderInjectionSource(): string {
     return { element };
   }
 
-  function targetFor(rawTarget, control) {
+  function targetFor(rawTarget, control, options) {
     const element = elementFor(rawTarget);
     if (!element || element.nodeType !== Node.ELEMENT_NODE) return undefined;
     const rect = element.getBoundingClientRect();
@@ -504,7 +520,7 @@ export function recorderInjectionSource(): string {
         confidence: 'high',
       };
     }
-    const selectedOptionText = control === 'select' ? selectedOptionTextFor(element) : undefined;
+    const selectedOptionText = control === 'select' && !options?.omitSelectOptionText ? selectedOptionTextFor(element) : undefined;
     const text = control ? selectedOptionText : actionInputTextFor(element) || normalizedText(element.innerText || element.textContent || '').slice(0, 120) || undefined;
     const aria = element.getAttribute('aria-label') || undefined;
     const label = labelFor(element);
@@ -554,8 +570,8 @@ export function recorderInjectionSource(): string {
   function recordValueEvent(event) {
     flushPendingScroll();
     const info = controlInfoFor(event.target);
-    if (info.unsupported) {
-      record(basePayload('unsupported', targetFor(info.element || event.target)));
+    if (info.unsupported || !info.control) {
+      record(basePayload('unsupported', targetFor(info.element || event.target, info.control, { omitSelectOptionText: info.omitOptionText })));
       return;
     }
     const target = targetFor(info.element || event.target, info.control);

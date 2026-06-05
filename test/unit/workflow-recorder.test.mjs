@@ -1170,6 +1170,44 @@ test('recorded geometry-only contenteditable input is skipped because Phase 1 ca
   ]);
 });
 
+test('control-less input and change events are unsupported and omit value', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const host = fakeRecordedElement({
+    id: 'custom-widget',
+    localName: 'div',
+    tagName: 'DIV',
+    innerText: 'Custom widget',
+    textContent: 'Custom widget',
+  });
+  const events = [
+    await recordFixtureEvent(host, 'input'),
+    await recordFixtureEvent(host, 'change'),
+  ];
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-custom-host-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-custom-host-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events,
+    });
+
+    assert.deepEqual(events.map((event) => event.type), ['unsupported', 'unsupported']);
+    assert.deepEqual(events.map((event) => event.control), [undefined, undefined]);
+    assert.deepEqual(events.map((event) => event.value), [undefined, undefined]);
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
 test('recorded selector-less select is skipped because Phase 1 cannot replay the post-change option target', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
   const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
@@ -1275,6 +1313,53 @@ test('recorded sensitive select change is unsupported and omits selected option 
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test('recorded select with duplicate visible option labels is unsupported and omits option text', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'team-b',
+    options: [
+      { label: 'Team', innerText: 'Team', textContent: 'Team', value: 'team-a' },
+      { label: 'Team', innerText: 'Team', textContent: 'Team', value: 'team-b' },
+      { label: 'Admin', innerText: 'Admin', textContent: 'Admin', value: 'admin' },
+    ],
+    selectedOptions: [{
+      label: 'Team',
+      innerText: 'Team',
+      textContent: 'Team',
+      value: 'team-b',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'role' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-ambiguous-select-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-ambiguous-select',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(event.target.semantic.text, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 
 test('recorded select with stable selector omits semantic selected option text', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
