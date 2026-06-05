@@ -9,6 +9,7 @@ import {
   text,
 } from '../../dist/sites/probes/selector-runtime.js';
 import {
+  youtubeChannelSummary,
   youtubeComments,
   youtubeScrollToComments,
   youtubeVideoDetails,
@@ -376,6 +377,51 @@ test('youtubeVideoDetails normalizes malformed page payloads', async () => {
   assert.deepEqual(result.evidence, {
     pageId: undefined,
     hasVideoId: false,
+  });
+});
+
+test('youtubeChannelSummary evaluates channel page summary with small evidence', async () => {
+  const summary = {
+    url: 'https://www.youtube.com/@proof',
+    title: 'Proof channel',
+    heading: 'Proof',
+    text: 'Visible channel page text',
+  };
+  const result = await youtubeChannelSummary({
+    profile: 'default',
+    pageId: 10,
+    evaluate: async (profile, expression, pageId) => {
+      assert.equal(profile, 'default');
+      assert.equal(pageId, 10);
+      assert.equal(expression.includes('yt-page-header-renderer'), true);
+      return { value: summary };
+    },
+  });
+
+  assert.deepEqual(result.summary, summary);
+  assert.deepEqual(result.evidence, {
+    pageId: 10,
+    hasHeading: true,
+  });
+  assert.equal(JSON.stringify(result.evidence).includes('Proof'), false);
+  assert.equal(JSON.stringify(result.evidence).includes('Visible channel page text'), false);
+});
+
+test('youtubeChannelSummary normalizes malformed page payloads', async () => {
+  const result = await youtubeChannelSummary({
+    profile: 'default',
+    evaluate: async () => ({ value: { heading: 42 } }),
+  });
+
+  assert.deepEqual(result.summary, {
+    url: '',
+    title: '',
+    heading: '',
+    text: '',
+  });
+  assert.deepEqual(result.evidence, {
+    pageId: undefined,
+    hasHeading: false,
   });
 });
 

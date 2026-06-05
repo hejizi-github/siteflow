@@ -210,3 +210,36 @@ test('youtube video proof returns step trace through injected deps', async () =>
   assert.equal(stepTrace.includes('Proof video'), false);
   assert.equal(stepTrace.includes('Visible watch page text'), false);
 });
+
+test('youtube channel proof returns step trace through injected deps', async () => {
+  const deps = {
+    ...youtubeTesting.deps,
+    openOrNavigateSitePage: async () => ({ pageId: 6, url: 'https://www.youtube.com/@proof', title: 'Proof channel' }),
+    sleep: async () => {},
+    youtubeChannelSummary: async () => ({
+      summary: {
+        url: 'https://www.youtube.com/@proof',
+        title: 'Proof channel',
+        heading: 'Proof',
+        text: 'Visible channel page text',
+      },
+      evidence: {
+        pageId: 6,
+        hasHeading: true,
+      },
+    }),
+  };
+
+  const receipt = await youtubeTesting.runChannel({ profile: 'default' }, { target: '@proof' }, deps);
+
+  assert.equal(receipt.site, 'youtube');
+  assert.equal(receipt.command, 'channel');
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.observations.title, 'Proof channel');
+  assert.equal(receipt.observations.heading, 'Proof');
+  assert.equal(receipt.observations.text, 'Visible channel page text');
+  assert.deepEqual(receipt.steps.map(step => step.name), ['open_channel_page', 'wait_for_channel_page', 'extract_channel_summary']);
+  const stepTrace = JSON.stringify(receipt.steps);
+  assert.equal(stepTrace.includes('Proof channel'), false);
+  assert.equal(stepTrace.includes('Visible channel page text'), false);
+});

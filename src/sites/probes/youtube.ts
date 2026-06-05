@@ -42,6 +42,13 @@ export interface YouTubeVideoDetails {
   text: string;
 }
 
+export interface YouTubeChannelSummary {
+  url: string;
+  title: string;
+  heading: string;
+  text: string;
+}
+
 export async function youtubeSearchResults(page: ProbePage, options: YouTubeProbeOptions): Promise<{ videos: YouTubeVideo[]; evidence: ExtractListResult['evidence'] & { requestedLimit: number } }> {
   const requestedLimit = normalizeLimit(options.limit);
   const scanLimit = Math.min(Math.max(requestedLimit * 3, requestedLimit), 300);
@@ -116,12 +123,40 @@ export async function youtubeVideoDetails(page: ProbePage): Promise<{ details: Y
   };
 }
 
+export async function youtubeChannelSummary(page: ProbePage): Promise<{ summary: YouTubeChannelSummary; evidence: Record<string, unknown> }> {
+  const result = normalizeChannelSummary(await evaluateChannelSummary(page));
+  return {
+    summary: result,
+    evidence: {
+      pageId: page.pageId,
+      hasHeading: Boolean(result.heading),
+    },
+  };
+}
+
 export async function youtubeScrollToComments(page: ProbePage): Promise<Record<string, unknown>> {
   return {
     ...(await scrollPage(page)),
     pageId: page.pageId,
     scrolled: true,
   };
+}
+
+async function evaluateChannelSummary(page: ProbePage): Promise<unknown> {
+  const evaluate = page.evaluate ?? evaluateSiteExpression;
+  return unwrapValue(await evaluate(
+    page.profile,
+    `(() => {
+      const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
+      return {
+        url: location.href,
+        title: document.title,
+        heading: clean(document.querySelector('h1, yt-page-header-renderer h1')?.textContent),
+        text: clean(document.body.innerText).slice(0, 5000)
+      };
+    })()`,
+    page.pageId,
+  ));
 }
 
 async function evaluateVideoDetails(page: ProbePage): Promise<YouTubeVideoDetails> {
@@ -152,6 +187,16 @@ async function evaluateVideoDetails(page: ProbePage): Promise<YouTubeVideoDetail
     page.pageId,
   );
   return unwrapValue(result) as YouTubeVideoDetails;
+}
+
+function normalizeChannelSummary(value: unknown): YouTubeChannelSummary {
+  const record = isRecord(value) ? value : {};
+  return {
+    url: stringValue(record.url),
+    title: stringValue(record.title),
+    heading: stringValue(record.heading),
+    text: stringValue(record.text),
+  };
 }
 
 function normalizeVideoDetails(value: unknown): YouTubeVideoDetails {

@@ -4,7 +4,7 @@ import type { Command } from 'commander';
 import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, siteReceipt, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 import { defineSiteFlow, flowEvidence } from './flow/define-flow.js';
-import { youtubeComments, youtubeScrollToComments, youtubeSearchResults, youtubeVideoDetails, type YouTubeVideoDetails } from './probes/youtube.js';
+import { youtubeChannelSummary, youtubeComments, youtubeScrollToComments, youtubeSearchResults, youtubeVideoDetails, type YouTubeChannelSummary, type YouTubeVideoDetails } from './probes/youtube.js';
 import type { ProbePage } from './probes/selector-runtime.js';
 
 const SITE = 'youtube';
@@ -35,6 +35,10 @@ interface YouTubeDeps {
     details: YouTubeVideoDetails;
     evidence: Record<string, unknown>;
   }>;
+  youtubeChannelSummary(page: ProbePage): Promise<{
+    summary: YouTubeChannelSummary;
+    evidence: Record<string, unknown>;
+  }>;
 }
 
 const defaultDeps: YouTubeDeps = {
@@ -44,6 +48,7 @@ const defaultDeps: YouTubeDeps = {
   youtubeComments,
   youtubeScrollToComments,
   youtubeVideoDetails,
+  youtubeChannelSummary,
 };
 
 function videoId(target: string): string | undefined {
@@ -141,15 +146,34 @@ async function runVideo(ctx: SiteCommandContext, options: TargetOptions, deps: Y
     });
 }
 
-async function runChannel(ctx: SiteCommandContext, options: TargetOptions): Promise<SiteReceipt> {
+async function runChannel(ctx: SiteCommandContext, options: TargetOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
   const target = options.target.startsWith('http') ? options.target : `https://www.youtube.com/${options.target.startsWith('@') ? options.target : `@${options.target}`}`;
-  const page = await openOrNavigateSitePage(ctx.profile, target, options.pageId);
-  await sleep(1800);
-  const result = await evaluateSiteExpression(ctx.profile, `(() => {
-    const clean = v => String(v || '').replace(/\\s+/g, ' ').trim();
-    return { url: location.href, title: document.title, heading: clean(document.querySelector('h1, yt-page-header-renderer h1')?.textContent), text: clean(document.body.innerText).slice(0, 5000) };
-  })()`, page.pageId);
-  return siteReceipt(SITE, 'channel', { target: options.target, pageId: page.pageId, ...(result.value as Record<string, unknown>), sideEffects: [] });
+  return defineSiteFlow(ctx, SITE, 'channel')
+    .step('open_channel_page', async () => {
+      const page = await deps.openOrNavigateSitePage(ctx.profile, target, options.pageId);
+      return flowEvidence(page, pageEvidence(page));
+    })
+    .step('wait_for_channel_page', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_channel_page');
+      const waitedMs = 1800;
+      await deps.sleep(waitedMs);
+      return flowEvidence({ pageId: page.pageId, waitedMs }, { pageId: page.pageId, waitedMs });
+    })
+    .step('extract_channel_summary', async flow => {
+      const page = flow.get<YouTubePageInfo>('open_channel_page');
+      const result = await deps.youtubeChannelSummary({ profile: ctx.profile, pageId: page.pageId });
+      return flowEvidence(result.summary, result.evidence);
+    })
+    .receipt(flow => {
+      const page = flow.get<YouTubePageInfo>('open_channel_page');
+      const summary = flow.get<YouTubeChannelSummary>('extract_channel_summary');
+      return siteReceipt(SITE, 'channel', {
+        target: options.target,
+        pageId: page.pageId,
+        ...summary,
+        sideEffects: [],
+      });
+    });
 }
 
 async function runComments(ctx: SiteCommandContext, options: CommentsOptions, deps: YouTubeDeps = defaultDeps): Promise<SiteReceipt> {
@@ -286,6 +310,7 @@ export const youtubeAdapter: SiteAdapter = {
 export const youtubeTesting = {
   runSearch,
   runVideo,
+  runChannel,
   runComments,
   deps: defaultDeps,
 };
