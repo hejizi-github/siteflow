@@ -25,6 +25,8 @@ test('redacts sensitive command arguments before persisting failure receipts', a
     'raw-token',
     '--cookie=raw-cookie',
     'https://example.com/path?token=raw-url-token&q=visible',
+    '--url=https://example.com/?token=raw-secret&q=ok',
+    '--script-url=https://example.com/a.js?api_key=raw-key',
     '--name',
     'visible-name',
   ];
@@ -36,6 +38,8 @@ test('redacts sensitive command arguments before persisting failure receipts', a
     '[REDACTED]',
     '--cookie=[REDACTED]',
     'https://example.com/path?token=%5BREDACTED%5D&q=visible',
+    '--url=https://example.com/?token=%5BREDACTED%5D&q=ok',
+    '--script-url=https://example.com/a.js?api_key=%5BREDACTED%5D',
     '--name',
     'visible-name',
   ]);
@@ -49,6 +53,8 @@ test('redacts sensitive command arguments before persisting failure receipts', a
     assert.equal(text.includes('raw-token'), false);
     assert.equal(text.includes('raw-cookie'), false);
     assert.equal(text.includes('raw-url-token'), false);
+    assert.equal(text.includes('raw-secret'), false);
+    assert.equal(text.includes('raw-key'), false);
     assert.equal(text.includes('visible-name'), true);
   }
 

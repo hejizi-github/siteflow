@@ -79,8 +79,10 @@ export function redactCommandArgs(command: string[]): string[] {
     }
 
     if (arg.startsWith('--') && arg.includes('=')) {
-      const [flag] = arg.split('=', 1);
-      redacted.push(isSensitiveFlagName(flag) ? `${flag}=[REDACTED]` : redactUrlArg(arg));
+      const equalsIndex = arg.indexOf('=');
+      const flag = arg.slice(0, equalsIndex);
+      const value = arg.slice(equalsIndex + 1);
+      redacted.push(isSensitiveFlagName(flag) ? `${flag}=[REDACTED]` : `${flag}=${redactUrlArg(value)}`);
       continue;
     }
 
