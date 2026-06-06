@@ -318,7 +318,29 @@ npm run build
 ```bash
 npm run typecheck
 npm run test:unit
+npm run test:coverage
+npm run test:coverage:uncovered
 ```
+
+覆盖率产物会写到 `coverage/`：
+
+- `coverage/summary.md`：人读摘要
+- `coverage/summary.json`：机器读摘要
+- `coverage/unit-coverage.txt`：Node 原始 coverage 输出
+- `coverage/uncovered-lines.md`：按文件列出的未覆盖行
+- `coverage/uncovered-lines.json`：未覆盖行机器读结果
+- `coverage/raw/`：V8 原始 coverage JSON
+
+只想看“哪些行还没覆盖”时：
+
+```bash
+npm run test:coverage:uncovered
+```
+
+CI 使用覆盖率门禁：
+
+```bash
+npm run test:coverage:ci
 
 本地打包检查：
 
