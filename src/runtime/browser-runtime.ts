@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { BrowserKernelContext } from './browser-kernel-context.js';
@@ -474,21 +475,12 @@ export class BrowserRuntime {
         const { page } = this.getSelectedPage();
         await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x: deltaX, y: deltaY });
       },
-      waitFor: async (condition) => {
-        const { page } = this.getSelectedPage();
-        await page.evaluate(async ({ ms, selector, text, urlContains }) => {
-          const deadline = Date.now() + ms;
-          for (;;) {
-            const selectorMatched = selector === undefined || document.querySelector(selector) !== null;
-            const textMatched = text === undefined || document.body?.innerText.includes(text) === true;
-            const urlMatched = urlContains === undefined || window.location.href.includes(urlContains);
-            if (selectorMatched && textMatched && urlMatched) return;
-            if (Date.now() >= deadline) throw new Error('Timed out waiting for workflow condition');
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        }, condition);
-      },
+      waitFor: (condition) => this.waitForReplayCondition(condition),
     };
+    const firstStep = workflow.steps[0];
+    if (options.dryRun !== true && (firstStep === undefined || firstStep.type !== 'open' || firstStep.url !== workflow.startUrl)) {
+      await this.open(workflow.startUrl);
+    }
     return runWorkflow(driver, workflow, options);
   }
 
@@ -703,6 +695,37 @@ export class BrowserRuntime {
     return ensureDebuggerReady(page, observation);
   }
 
+
+  private async waitForReplayCondition(condition: { ms: number; selector?: string; text?: string; urlContains?: string }): Promise<void> {
+    const deadline = Date.now() + condition.ms;
+    for (;;) {
+      try {
+        const { page } = this.getSelectedPage();
+        const matched = await page.evaluate(({ selector, text, urlContains }) => {
+          const selectorMatched = selector === undefined || document.querySelector(selector) !== null;
+          const textMatched = text === undefined || document.body?.innerText.includes(text) === true;
+          const urlMatched = urlContains === undefined || window.location.href.includes(urlContains);
+          return selectorMatched && textMatched && urlMatched;
+        }, condition);
+        if (matched) return;
+      } catch (error) {
+        if (!this.isNavigationEvaluationError(error)) throw error;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new SiteflowError('REPLAY_WAIT_TIMEOUT', 'Timed out waiting for workflow condition.');
+      }
+      await sleep(Math.min(50, remainingMs));
+    }
+  }
+
+  private isNavigationEvaluationError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('Execution context was destroyed')
+      || message.includes('Cannot find context with specified id')
+      || message.includes('Most likely because of a navigation');
+  }
 
   private shouldSkipCurlHeader(name: string): boolean {
     return ['host', 'content-length', 'connection'].includes(name.toLowerCase());

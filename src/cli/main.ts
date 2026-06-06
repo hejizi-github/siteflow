@@ -32,7 +32,6 @@ import {
   getRecorderStatus,
   stopRecorder,
   runReplayWorkflow,
-  exportReplayCli,
   breakXhr,
   installHook,
   listHooks,
@@ -62,6 +61,8 @@ import {
 import { printError, printSuccess, type OutputOptions } from './output.js';
 import type { CookieRecord, NetworkBody, NetworkEntry, TraceEvent } from '../shared/types.js';
 import { registerSiteCommands } from '../sites/registry.js';
+import { exportWorkflowCli as exportWorkflowCliScript } from '../runtime/workflow-export.js';
+import { validateWorkflow } from '../runtime/workflow-validation.js';
 
 interface GlobalOptions {
   json?: boolean;
@@ -1097,11 +1098,11 @@ replay
   .argument('<workflow>', 'workflow JSON file')
   .requiredOption('--out <path>', 'output shell script path')
   .action(async function (workflow: string) {
-    await run(this, async opts => {
+    await run(this, async () => {
       const local = this.opts<{ out: string }>();
-      const result = await exportReplayCli(opts.profile, await readJsonFile(workflow));
-      await writeTextFileCreatingParents(local.out, result.script);
-      return { out: local.out, bytes: Buffer.byteLength(result.script), script: `[written:${local.out}]` };
+      const script = exportWorkflowCliScript(validateWorkflow(await readJsonFile(workflow)));
+      await writeTextFileCreatingParents(local.out, script);
+      return { out: local.out, bytes: Buffer.byteLength(script), script: `[written:${local.out}]` };
     });
   });
 

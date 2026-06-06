@@ -1,5 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { BrowserRuntime } from '../../dist/runtime/browser-runtime.js';
+
 
 test('target matcher prefers semantic targets before structural targets', async () => {
   const { browserTargetFromRecordedTarget } = await import('../../dist/runtime/target-matcher.js');
@@ -463,4 +470,75 @@ test('runWorkflow wait defaults to one second', async () => {
 
   assert.equal(result.ok, true);
   assert.ok(Date.now() - startedAt >= 900);
+});
+
+function workflowWithFirstStep(step) {
+  return {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-06T00:00:00.000Z',
+    startUrl: 'https://example.test/start',
+    variables: [],
+    steps: [step],
+  };
+}
+
+test('BrowserRuntime replay opens startUrl before a non-open first step', async () => {
+  const runtime = new BrowserRuntime('unit-start-url');
+  const calls = [];
+  runtime.open = async url => {
+    calls.push(['open', url]);
+    return { id: 1, url, title: '', selected: true };
+  };
+  runtime.click = async options => {
+    calls.push(['click', options.selector]);
+    return { action: 'click', page: { id: 1, url: 'https://example.test/start', title: '', selected: true }, target: 'selector:button', url: 'https://example.test/start' };
+  };
+
+  const result = await runtime.runReplayWorkflow(workflowWithFirstStep({
+    id: 'click-submit',
+    type: 'click',
+    target: {
+      structural: { selector: 'button' },
+      confidence: 'high',
+    },
+  }), {});
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    ['open', 'https://example.test/start'],
+    ['click', 'button'],
+  ]);
+});
+
+test('replay export-cli runs offline and emits startUrl bootstrap without daemon', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siteflow-replay-export-'));
+  const workflowPath = path.join(dir, 'workflow.json');
+  const scriptPath = path.join(dir, 'workflow.sh');
+  fs.writeFileSync(workflowPath, `${JSON.stringify(workflowWithFirstStep({
+    id: 'wait-ready',
+    type: 'wait',
+    ms: 100,
+    text: 'Ready',
+  }), null, 2)}\n`);
+
+  const result = spawnSync(process.execPath, [
+    'dist/cli/main.js',
+    '--json',
+    '--profile',
+    `offline-${Date.now()}`,
+    'replay',
+    'export-cli',
+    workflowPath,
+    '--out',
+    scriptPath,
+  ], {
+    cwd: path.resolve(import.meta.dirname, '../..'),
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const script = fs.readFileSync(scriptPath, 'utf8');
+  assert.match(script, /siteflow --json browser open 'https:\/\/example\.test\/start'/);
+  assert.match(script, /siteflow --json eval/);
 });
