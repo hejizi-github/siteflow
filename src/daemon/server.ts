@@ -9,7 +9,7 @@ import { profileDir } from '../shared/paths.js';
 import type { BrowserStorageRecord, CookieRecord, DaemonInfo, SavedState } from '../shared/types.js';
 import { clearDaemonInfo, writeDaemonInfo } from './state.js';
 import { appendTraceEvent } from '../traces/artifact-store.js';
-@ours,@theirs
+import type { RecorderStartOptions, ReplayRunOptions } from '../runtime/workflow-types.js';
 
 interface ServerOptions {
   profile: string;

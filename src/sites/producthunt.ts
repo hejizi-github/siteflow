@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { runSiteCommand, evaluateSiteExpression, listSiteNetwork, openSitePage, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, evaluateSiteExpression, listSiteNetwork, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'producthunt';
@@ -7,6 +7,7 @@ const ORIGIN = 'https://www.producthunt.com';
 
 interface OpenOptions {
   route?: string;
+  pageId?: string;
 }
 
 function routeUrl(route?: string): string {
@@ -15,7 +16,7 @@ function routeUrl(route?: string): string {
   return `${ORIGIN}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
-async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
+async function collectPage(ctx: SiteCommandContext, route?: string, pageId?: string): Promise<{
   url: string;
   title: string;
   text: string;
@@ -24,7 +25,7 @@ async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
   links: Array<{ text: string; url: string }>;
   products: Array<{ text: string; url: string }>;
 }> {
-  const page = await openSitePage(ctx.profile, routeUrl(route));
+  const page = await openOrNavigateSitePage(ctx.profile, routeUrl(route), pageId);
   await sleep(2500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -48,7 +49,7 @@ async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
       links,
       products
     };
-  })()`, page.id);
+  })()`, page.pageId);
   const value = result.value as {
     url: string;
     title: string;
@@ -78,8 +79,8 @@ async function collectPage(ctx: SiteCommandContext, route?: string): Promise<{
   };
 }
 
-async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  const data = await collectPage(ctx, '/');
+async function runStatus(ctx: SiteCommandContext, options: Pick<OpenOptions, 'pageId'> = {}): Promise<SiteReceipt> {
+  const data = await collectPage(ctx, '/', options.pageId);
   const state = data.blocked ? 'blocked_by_challenge' : 'status_collected';
   return {
     site: SITE,
@@ -104,7 +105,7 @@ async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
 }
 
 async function runOpen(ctx: SiteCommandContext, options: OpenOptions): Promise<SiteReceipt> {
-  const data = await collectPage(ctx, options.route || '/');
+  const data = await collectPage(ctx, options.route || '/', options.pageId);
   return {
     site: SITE,
     command: 'open',
@@ -135,8 +136,8 @@ export const producthuntAdapter: SiteAdapter = {
       name: 'status',
       description: 'Open Product Hunt and report whether public automation is blocked',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, ctx => runStatus(ctx));
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<Pick<OpenOptions, 'pageId'>>()));
         });
       },
     },
@@ -144,10 +145,10 @@ export const producthuntAdapter: SiteAdapter = {
       name: 'open',
       description: 'Open a Product Hunt route or URL and collect visible public links when not challenged',
       configure(command: Command): void {
-        command
-          .argument('[route-or-url]', 'Product Hunt route or URL', '/')
+        addSitePageIdOption(command
+          .argument('[route-or-url]', 'Product Hunt route or URL', '/'))
           .action(async function (route: string) {
-            await runSiteCommand(this, ctx => runOpen(ctx, { route }));
+            await runSiteCommand(this, ctx => runOpen(ctx, { ...this.opts<Omit<OpenOptions, 'route'>>(), route }));
           });
       },
     },

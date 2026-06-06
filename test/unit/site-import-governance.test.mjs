@@ -158,6 +158,19 @@ test('capabilities facade owns browser-kernel page targeting option wiring', () 
   assert.equal(/\.option\s*\(\s*['"]--page-id\b/.test(source), true);
 });
 
+test('site adapters use page-targeted open or navigate through the capabilities facade', () => {
+  const found = [];
+  for (const { relative, source } of adapterSourceFiles()) {
+    const openSitePageImport = /import\s*\{[^}]*\bopenSitePage\b[^}]*\}\s*from\s*['"]\.\/capabilities\.js['"]/s;
+    if (openSitePageImport.test(source)) {
+      found.push(relative);
+    }
+  }
+
+  found.sort();
+  assert.deepEqual(found, []);
+});
+
 test('capabilities facade parses browser-kernel page ids strictly', async () => {
   const { parseSitePageId } = await import('../../dist/sites/capabilities.js');
 

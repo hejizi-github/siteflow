@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import {
   runSiteCommand,
+  addSitePageIdOption,
   captureSiteScreenshot,
   clickSiteTarget,
   detectSiteCaptcha,
@@ -21,6 +22,7 @@ interface SunoCreateOptions {
   screenshot?: string;
   wait: string;
   submit?: boolean;
+  pageId?: string;
 }
 
 async function readMaybeFile(value: string | undefined, file: string | undefined): Promise<string | undefined> {
@@ -40,10 +42,10 @@ function composePrompt(lyrics: string | undefined, style: string | undefined): s
   return lyrics || style;
 }
 
-async function fillCreatePrompt(profile: string, lyrics: string | undefined, style: string | undefined): Promise<{ usedSingleField: boolean }> {
+async function fillCreatePrompt(profile: string, lyrics: string | undefined, style: string | undefined, pageId?: number): Promise<{ usedSingleField: boolean }> {
   const prompt = composePrompt(lyrics, style);
   if (!prompt) return { usedSingleField: false };
-  await typeIntoSiteTarget(profile, { selector: 'textarea', nth: 0, value: prompt });
+  await typeIntoSiteTarget(profile, { pageId, selector: 'textarea', nth: 0, value: prompt });
   return { usedSingleField: true };
 }
 
@@ -55,14 +57,15 @@ async function runCreate(ctx: SiteCommandContext, options: SunoCreateOptions): P
   const lyrics = await readMaybeFile(options.lyrics, options.lyricsFile);
   const style = await readMaybeFile(options.style, options.styleFile);
   const screenshots: string[] = [];
-  await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com');
-  const fillResult = await fillCreatePrompt(ctx.profile, lyrics, style);
+  const pageInfo = await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com', options.pageId);
+  const pageId = pageInfo.id;
+  const fillResult = await fillCreatePrompt(ctx.profile, lyrics, style, pageId);
 
 
-  const filledShot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+  const filledShot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (filledShot) screenshots.push(filledShot);
 
-  const pageBeforeSubmit = await readSiteSnapshot(ctx.profile);
+  const pageBeforeSubmit = await readSiteSnapshot(ctx.profile, pageId);
   const readyGateBeforeSubmit = isReadyGate(pageBeforeSubmit.text);
   if (!options.submit) {
     return {
@@ -105,12 +108,12 @@ async function runCreate(ctx: SiteCommandContext, options: SunoCreateOptions): P
     };
   }
 
-  await clickSiteTarget(ctx.profile, { text: 'Create', timeoutMs: 15_000 });
+  await clickSiteTarget(ctx.profile, { pageId, text: 'Create', timeoutMs: 15_000 });
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 45_000);
 
-  const page = await readSiteSnapshot(ctx.profile);
-  const captcha = await detectSiteCaptcha(ctx.profile);
+  const page = await readSiteSnapshot(ctx.profile, pageId);
+  const captcha = await detectSiteCaptcha(ctx.profile, pageId);
   const errors = await readRecentSiteErrors(ctx.profile, 30);
   const serviceUnavailable = hasServiceUnavailable(errors);
   const generated = Boolean(options.title && page.text.includes(options.title));
@@ -149,10 +152,10 @@ async function runCreate(ctx: SiteCommandContext, options: SunoCreateOptions): P
   };
 }
 
-async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com');
-  const page = await readSiteSnapshot(ctx.profile);
-  const captcha = await detectSiteCaptcha(ctx.profile);
+async function runStatus(ctx: SiteCommandContext, options: { pageId?: string } = {}): Promise<SiteReceipt> {
+  const pageInfo = await ensureSitePage(ctx.profile, 'https://suno.com/create', 'suno.com', options.pageId);
+  const page = await readSiteSnapshot(ctx.profile, pageInfo.id);
+  const captcha = await detectSiteCaptcha(ctx.profile, pageInfo.id);
   const errors = await readRecentSiteErrors(ctx.profile, 20);
   const onSuno = page.url.includes('suno.com');
   return {
@@ -180,7 +183,7 @@ export const sunoAdapter: SiteAdapter = {
       name: 'create',
       description: 'Fill Suno Advanced lyrics/style and optionally submit generation',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--lyrics <text>', 'lyrics text')
           .option('--lyrics-file <path>', 'lyrics file')
           .option('--style <text>', 'style prompt text')
@@ -188,7 +191,7 @@ export const sunoAdapter: SiteAdapter = {
           .option('--title <text>', 'expected generated title for status detection')
           .option('--screenshot <path>', 'save filled-form screenshot')
           .option('--wait <ms>', 'milliseconds to wait after submit', '45000')
-          .option('--submit', 'clickSiteTarget Create song after filling')
+          .option('--submit', 'clickSiteTarget Create song after filling'))
           .action(async function () {
             await runSiteCommand(this, ctx => runCreate(ctx, this.opts<SunoCreateOptions>()));
           });
@@ -198,8 +201,8 @@ export const sunoAdapter: SiteAdapter = {
       name: 'status',
       description: 'Observe current Suno page, captcha state, and recent errors',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, runStatus);
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<{ pageId?: string }>()));
         });
       },
     },

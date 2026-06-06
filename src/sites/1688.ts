@@ -1,28 +1,33 @@
 import type { Command } from 'commander';
-import { runSiteCommand, evaluateSiteExpression, listSiteNetwork, openSitePage, readSiteNetworkPart, readSiteSnapshot, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, evaluateSiteExpression, listSiteNetwork, openOrNavigateSitePage, readSiteNetworkPart, readSiteSnapshot, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 interface AlibabaSeoOptions {
   keyword: string;
   title?: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface AlibabaSearchOptions {
   keyword: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface AlibabaHomeOptions {
   limit?: string;
+  pageId?: string;
 }
 
 interface AlibabaSuggestOptions {
   keyword: string;
+  pageId?: string;
 }
 
 interface AlibabaProductOptions {
   offer: string;
+  pageId?: string;
 }
 
 interface SearchItem {
@@ -243,8 +248,8 @@ function buildSeoSuggestions(keyword: string, sourceTitle: string | undefined, t
   });
 }
 
-async function collectSearchPage(ctx: SiteCommandContext, keyword: string, limit: number): Promise<SearchPageData> {
-  const page = await openSitePage(ctx.profile, keywordUrl(keyword));
+async function collectSearchPage(ctx: SiteCommandContext, keyword: string, limit: number, pageId?: string): Promise<SearchPageData> {
+  const page = await openOrNavigateSitePage(ctx.profile, keywordUrl(keyword), pageId);
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -286,12 +291,12 @@ async function collectSearchPage(ctx: SiteCommandContext, keyword: string, limit
       filters: Array.from(new Set(filters)).slice(0, 30),
       items: items.slice(0, ${JSON.stringify(limit)})
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as SearchPageData;
 }
 
-async function collectHomePage(ctx: SiteCommandContext, limit: number): Promise<HomePageData> {
-  const page = await openSitePage(ctx.profile, homeUrl());
+async function collectHomePage(ctx: SiteCommandContext, limit: number, pageId?: string): Promise<HomePageData> {
+  const page = await openOrNavigateSitePage(ctx.profile, homeUrl(), pageId);
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -332,12 +337,12 @@ async function collectHomePage(ctx: SiteCommandContext, limit: number): Promise<
       items: items.slice(0, ${JSON.stringify(limit)}),
       textExcerpt: bodyText.slice(0, 3000)
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as HomePageData;
 }
 
-async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Promise<SuggestPageData> {
-  const page = await openSitePage(ctx.profile, keywordUrl(keyword));
+async function collectSuggestPage(ctx: SiteCommandContext, keyword: string, pageId?: string): Promise<SuggestPageData> {
+  const page = await openOrNavigateSitePage(ctx.profile, keywordUrl(keyword), pageId);
   await sleep(3500);
 
   const pageResult = await evaluateSiteExpression(ctx.profile, `(() => {
@@ -351,7 +356,7 @@ async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Pro
       relatedSuggestions: Array.from(new Set(bodyLines.filter(line => line.includes(${JSON.stringify(keyword)}) && line.length <= 18 && line !== ${JSON.stringify(keyword)}))).slice(0, 20),
       filters: Array.from(new Set(bodyLines.filter(line => /^(产地|材质|风格|应用场景|加工定制|综合|销量|价格|起订量|店铺商品数|所在地区|商家特色|经营模式|一件代发|48H发货|退货包运费|1688严选|跨境证书)$/.test(line)))).slice(0, 30)
     };
-  })()`, page.id);
+  })()`, page.pageId);
   const pageData = pageResult.value as Omit<SuggestPageData, 'suggestions' | 'source'>;
 
   const entries = await listSiteNetwork(ctx.profile, 600);
@@ -394,8 +399,8 @@ async function collectSuggestPage(ctx: SiteCommandContext, keyword: string): Pro
   };
 }
 
-async function collectProductPage(ctx: SiteCommandContext, offer: string): Promise<ProductPageData> {
-  const page = await openSitePage(ctx.profile, productUrl(offer));
+async function collectProductPage(ctx: SiteCommandContext, offer: string, pageId?: string): Promise<ProductPageData> {
+  const page = await openOrNavigateSitePage(ctx.profile, productUrl(offer), pageId);
   await sleep(4500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -440,7 +445,7 @@ async function collectProductPage(ctx: SiteCommandContext, offer: string): Promi
       imageUrls,
       textExcerpt: bodyText.slice(0, 3000)
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as ProductPageData;
 }
 
@@ -456,7 +461,7 @@ async function runSearch(ctx: SiteCommandContext, options: AlibabaSearchOptions)
     };
   }
   const limit = Math.max(1, Math.min(Number(options.limit || 20) || 20, 50));
-  const data = await collectSearchPage(ctx, keyword, limit);
+  const data = await collectSearchPage(ctx, keyword, limit, options.pageId);
   return {
     site: '1688',
     command: 'search',
@@ -480,7 +485,7 @@ async function runSearch(ctx: SiteCommandContext, options: AlibabaSearchOptions)
 
 async function runHome(ctx: SiteCommandContext, options: AlibabaHomeOptions): Promise<SiteReceipt> {
   const limit = Math.max(1, Math.min(Number(options.limit || 20) || 20, 50));
-  const data = await collectHomePage(ctx, limit);
+  const data = await collectHomePage(ctx, limit, options.pageId);
   const challengeDetected = /验证码|滑块|安全验证|拦截|punish|captcha/i.test(`${data.title}\n${data.textExcerpt}`);
   if (challengeDetected) {
     return {
@@ -529,7 +534,7 @@ async function runSuggest(ctx: SiteCommandContext, options: AlibabaSuggestOption
       errors: [{ code: 'MISSING_KEYWORD', message: 'Please provide --keyword.' }],
     };
   }
-  const data = await collectSuggestPage(ctx, keyword);
+  const data = await collectSuggestPage(ctx, keyword, options.pageId);
   return {
     site: '1688',
     command: 'suggest',
@@ -562,7 +567,7 @@ async function runProduct(ctx: SiteCommandContext, options: AlibabaProductOption
       errors: [{ code: 'MISSING_OFFER', message: 'Please provide --offer with an offerId or product URL.' }],
     };
   }
-  const data = await collectProductPage(ctx, offer);
+  const data = await collectProductPage(ctx, offer, options.pageId);
   const challengeDetected = /验证码|滑块|安全验证|拦截|punish|captcha/i.test(`${data.title}\n${data.textExcerpt}`);
   if (challengeDetected) {
     return {
@@ -622,7 +627,7 @@ async function runSeo(ctx: SiteCommandContext, options: AlibabaSeoOptions): Prom
     };
   }
   const limit = Math.max(5, Math.min(Number(options.limit || 20) || 20, 50));
-  const data = await collectSearchPage(ctx, keyword, limit);
+  const data = await collectSearchPage(ctx, keyword, limit, options.pageId);
   const page = await readSiteSnapshot(ctx.profile);
   const terms = topTerms(data.items, keyword, 18);
   const audit = options.title ? titleScore(options.title, keyword, terms) : undefined;
@@ -663,8 +668,8 @@ export const alibaba1688Adapter: SiteAdapter = {
       name: 'home',
       description: 'Collect atomic 1688 selected-sourcing home page data',
       configure(command: Command): void {
-        command
-          .option('--limit <n>', 'number of home page items to sample', '20')
+        addSitePageIdOption(command
+          .option('--limit <n>', 'number of home page items to sample', '20'))
           .action(async function () {
             await runSiteCommand(this, ctx => runHome(ctx, this.opts<AlibabaHomeOptions>()));
           });
@@ -674,9 +679,9 @@ export const alibaba1688Adapter: SiteAdapter = {
       name: 'search',
       description: 'Collect atomic 1688 keyword search result data',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--keyword <text>', '1688 search keyword')
-          .option('--limit <n>', 'number of search result items to sample', '20')
+          .option('--limit <n>', 'number of search result items to sample', '20'))
           .action(async function () {
             await runSiteCommand(this, ctx => runSearch(ctx, this.opts<AlibabaSearchOptions>()));
           });
@@ -686,8 +691,8 @@ export const alibaba1688Adapter: SiteAdapter = {
       name: 'suggest',
       description: 'Collect 1688 keyword autocomplete and related suggestions',
       configure(command: Command): void {
-        command
-          .requiredOption('--keyword <text>', '1688 search keyword prefix or seed keyword')
+        addSitePageIdOption(command
+          .requiredOption('--keyword <text>', '1688 search keyword prefix or seed keyword'))
           .action(async function () {
             await runSiteCommand(this, ctx => runSuggest(ctx, this.opts<AlibabaSuggestOptions>()));
           });
@@ -697,8 +702,8 @@ export const alibaba1688Adapter: SiteAdapter = {
       name: 'product',
       description: 'Collect atomic 1688 product detail data',
       configure(command: Command): void {
-        command
-          .requiredOption('--offer <id-or-url>', '1688 offerId or product URL')
+        addSitePageIdOption(command
+          .requiredOption('--offer <id-or-url>', '1688 offerId or product URL'))
           .action(async function () {
             await runSiteCommand(this, ctx => runProduct(ctx, this.opts<AlibabaProductOptions>()));
           });
@@ -708,10 +713,10 @@ export const alibaba1688Adapter: SiteAdapter = {
       name: 'seo',
       description: 'Analyze 1688 keyword search results and suggest SEO title improvements',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--keyword <text>', '1688 search keyword')
           .option('--title <text>', 'current product title to audit')
-          .option('--limit <n>', 'number of search result items to sample', '20')
+          .option('--limit <n>', 'number of search result items to sample', '20'))
           .action(async function () {
             await runSiteCommand(this, ctx => runSeo(ctx, this.opts<AlibabaSeoOptions>()));
           });

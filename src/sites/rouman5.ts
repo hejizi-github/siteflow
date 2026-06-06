@@ -2,7 +2,7 @@ import type { Command } from 'commander';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { runSiteCommand, clampInt, evaluateSiteExpression, readSiteNetworkPart, listSiteNetwork, openSitePage, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, readSiteNetworkPart, listSiteNetwork, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { NetworkEntry } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
@@ -22,7 +22,11 @@ const AD_OR_TRACKING_HOSTS = new Set([
   'static.cloudflareinsights.com',
 ]);
 
-interface LimitOptions {
+interface PageTargetOptions {
+  pageId?: string;
+}
+
+interface LimitOptions extends PageTargetOptions {
   limit?: string;
 }
 
@@ -30,7 +34,7 @@ interface SearchOptions extends LimitOptions {
   keyword: string;
 }
 
-interface UrlOrIdOptions {
+interface UrlOrIdOptions extends PageTargetOptions {
   target: string;
 }
 
@@ -468,8 +472,8 @@ async function fetchText(url: string): Promise<{ ok: boolean; status?: number; t
   }
 }
 
-async function collectHome(ctx: SiteCommandContext, limit: number): Promise<{ url: string; title: string; ageGate: boolean; cards: ComicCard[]; textExcerpt: string }> {
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/home`);
+async function collectHome(ctx: SiteCommandContext, limit: number, pageId?: string): Promise<{ url: string; title: string; ageGate: boolean; cards: ComicCard[]; textExcerpt: string }> {
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/home`, pageId);
   await sleep(2000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -502,12 +506,12 @@ async function collectHome(ctx: SiteCommandContext, limit: number): Promise<{ ur
       cards: uniqueCards,
       textExcerpt: document.body.innerText.slice(0, 1200)
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as { url: string; title: string; ageGate: boolean; cards: ComicCard[]; textExcerpt: string };
 }
 
-async function collectSearch(ctx: SiteCommandContext, keyword: string, limit: number): Promise<{ url: string; title: string; keyword: string; resultCount: number; cards: ComicCard[] }> {
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/search?term=${encodeURIComponent(keyword)}&page=0`);
+async function collectSearch(ctx: SiteCommandContext, keyword: string, limit: number, pageId?: string): Promise<{ url: string; title: string; keyword: string; resultCount: number; cards: ComicCard[] }> {
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/search?term=${encodeURIComponent(keyword)}&page=0`, pageId);
   await sleep(2500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -534,12 +538,12 @@ async function collectSearch(ctx: SiteCommandContext, keyword: string, limit: nu
       resultCount: countMatch ? Number(countMatch[1]) : cards.length,
       cards
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as { url: string; title: string; keyword: string; resultCount: number; cards: ComicCard[] };
 }
 
-async function collectComic(ctx: SiteCommandContext, target: string): Promise<ComicDetail> {
-  const page = await openSitePage(ctx.profile, comicUrl(target));
+async function collectComic(ctx: SiteCommandContext, target: string, pageId?: string): Promise<ComicDetail> {
+  const page = await openOrNavigateSitePage(ctx.profile, comicUrl(target), pageId);
   await sleep(2000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -589,12 +593,12 @@ async function collectComic(ctx: SiteCommandContext, target: string): Promise<Co
       chapterCount: uniqueChapters.length,
       chapters: uniqueChapters
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as ComicDetail;
 }
 
-async function collectChapter(ctx: SiteCommandContext, target: string): Promise<ChapterData> {
-  const page = await openSitePage(ctx.profile, chapterUrl(target));
+async function collectChapter(ctx: SiteCommandContext, target: string, pageId?: string): Promise<ChapterData> {
+  const page = await openOrNavigateSitePage(ctx.profile, chapterUrl(target), pageId);
   await sleep(2500);
   // 滚动触发懒加载
   await evaluateSiteExpression(ctx.profile, `(() => {
@@ -615,7 +619,7 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
         attempts++;
       }, 500);
     });
-  })()`, page.id);
+  })()`, page.pageId);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -736,7 +740,7 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
       nextUrl: links.find(link => link.text === '下一頁')?.href,
       images
     };
-  })()`, page.id);
+  })()`, page.pageId);
   const raw = result.value as Omit<ChapterData, 'imageCount' | 'bodyCandidateCount' | 'filteredImageCount' | 'unknownImageCount' | 'mediaHosts' | 'filteredHosts' | 'unknownHosts'> & { images: Array<Omit<ChapterImageSummary, 'kind'>> };
   const images = raw.images
     .map(image => ({ ...image, pageNumber: image.pageNumber ?? pageNumberFromRoumanUrl(image.url), kind: classifyImageHost(image.host) }))
@@ -758,8 +762,8 @@ async function collectChapter(ctx: SiteCommandContext, target: string): Promise<
   };
 }
 
-async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  const page = await openSitePage(ctx.profile, ORIGIN);
+async function runStatus(ctx: SiteCommandContext, options: PageTargetOptions = {}): Promise<SiteReceipt> {
+  const page = await openOrNavigateSitePage(ctx.profile, ORIGIN, options.pageId);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => ({
     url: location.href,
@@ -768,7 +772,7 @@ async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
     ageGate: document.body.innerText.includes('您欲觀看的頁面包含成人內容'),
     loginLinks: Array.from(document.querySelectorAll('a[href*="/auth/"]')).map(a => a.href),
     nav: Array.from(document.querySelectorAll('a[href]')).map(a => String(a.textContent || '').replace(/\\s+/g, ' ').trim()).filter(Boolean).slice(0, 20)
-  }))()`, page.id);
+  }))()`, page.pageId);
   const value = result.value as { url: string; title: string; language?: string; ageGate?: boolean; loginLinks?: string[]; nav?: string[] };
   const [robots, sitemap] = await Promise.all([
     fetchText(`${ORIGIN}/robots.txt`),
@@ -807,7 +811,7 @@ async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
 
 async function runHome(ctx: SiteCommandContext, options: LimitOptions): Promise<SiteReceipt> {
   const limit = clampLimit(options.limit);
-  const data = await collectHome(ctx, limit);
+  const data = await collectHome(ctx, limit, options.pageId);
   return {
     site: SITE,
     command: 'home',
@@ -835,7 +839,7 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
       errors: [{ code: 'MISSING_KEYWORD', message: 'Provide a search keyword.' }],
     };
   }
-  const data = await collectSearch(ctx, keyword, clampLimit(options.limit));
+  const data = await collectSearch(ctx, keyword, clampLimit(options.limit), options.pageId);
   return {
     site: SITE,
     command: 'search',
@@ -854,7 +858,7 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
 }
 
 async function runComic(ctx: SiteCommandContext, options: UrlOrIdOptions): Promise<SiteReceipt> {
-  const data = await collectComic(ctx, options.target);
+  const data = await collectComic(ctx, options.target, options.pageId);
   return {
     site: SITE,
     command: 'comic',
@@ -881,7 +885,7 @@ async function runComic(ctx: SiteCommandContext, options: UrlOrIdOptions): Promi
 }
 
 async function runChapters(ctx: SiteCommandContext, options: UrlOrIdOptions): Promise<SiteReceipt> {
-  const data = await collectComic(ctx, options.target);
+  const data = await collectComic(ctx, options.target, options.pageId);
   return {
     site: SITE,
     command: 'chapters',
@@ -900,7 +904,7 @@ async function runChapters(ctx: SiteCommandContext, options: UrlOrIdOptions): Pr
 }
 
 async function runChapter(ctx: SiteCommandContext, options: ChapterOptions): Promise<SiteReceipt> {
-  const data = await collectChapter(ctx, options.target);
+  const data = await collectChapter(ctx, options.target, options.pageId);
   return {
     site: SITE,
     command: 'chapter',
@@ -938,8 +942,8 @@ async function runChapter(ctx: SiteCommandContext, options: ChapterOptions): Pro
   };
 }
 
-async function downloadChapterImages(ctx: SiteCommandContext, target: string, outDir: string, chapter?: ChapterLink): Promise<ChapterDownloadResult> {
-  const data = await collectChapter(ctx, target);
+async function downloadChapterImages(ctx: SiteCommandContext, target: string, outDir: string, chapter?: ChapterLink, pageId?: string): Promise<ChapterDownloadResult> {
+  const data = await collectChapter(ctx, target, pageId);
   const bodyImages = data.images.filter(img => img.kind === 'body_candidate');
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true });
@@ -996,7 +1000,7 @@ async function runDownload(ctx: SiteCommandContext, options: DownloadOptions): P
   const applyRequested = Boolean(options.apply);
 
   if (!applyRequested) {
-    const data = await collectChapter(ctx, options.target);
+    const data = await collectChapter(ctx, options.target, options.pageId);
     const network = await listSiteNetwork(ctx.profile, 500);
     const estimatedBytes = estimateBodyBytes(network);
     return {
@@ -1022,7 +1026,7 @@ async function runDownload(ctx: SiteCommandContext, options: DownloadOptions): P
     };
   }
 
-  const result = await downloadChapterImages(ctx, options.target, options.out || './downloads');
+  const result = await downloadChapterImages(ctx, options.target, options.out || './downloads', undefined, options.pageId);
   const data = result.data;
   const downloaded = result.downloaded;
 
@@ -1061,7 +1065,7 @@ function selectChapters(chapters: ChapterLink[], options: DownloadBookOptions): 
 }
 
 async function runDownloadBook(ctx: SiteCommandContext, options: DownloadBookOptions): Promise<SiteReceipt> {
-  const comic = await collectComic(ctx, options.target);
+  const comic = await collectComic(ctx, options.target, options.pageId);
   const selectedChapters = selectChapters(comic.chapters, options);
   const outDir = options.out || './downloads';
   const applyRequested = Boolean(options.apply);
@@ -1098,7 +1102,7 @@ async function runDownloadBook(ctx: SiteCommandContext, options: DownloadBookOpt
   for (const [ordinal, chapter] of selectedChapters.entries()) {
     const chapterOutDir = join(outDir, chapterDirName(chapter, ordinal));
     try {
-      const result = await downloadChapterImages(ctx, chapter.url, chapterOutDir, chapter);
+      const result = await downloadChapterImages(ctx, chapter.url, chapterOutDir, chapter, options.pageId);
       results.push(result);
     } catch (error) {
       failures.push({
@@ -1157,8 +1161,8 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'status',
       description: 'Check rouman5 public surface, age gate, login entrypoints, robots, and sitemap',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, ctx => runStatus(ctx));
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<PageTargetOptions>()));
         });
       },
     },
@@ -1166,8 +1170,8 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'home',
       description: 'Collect rouman5 home page comic metadata without downloading images',
       configure(command: Command): void {
-        command
-          .option('--limit <n>', 'number of comic cards to return', '20')
+        addSitePageIdOption(command
+          .option('--limit <n>', 'number of comic cards to return', '20'))
           .action(async function () {
             await runSiteCommand(this, ctx => runHome(ctx, this.opts<LimitOptions>()));
           });
@@ -1177,11 +1181,11 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'search',
       description: 'Search rouman5 public metadata without downloading images',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<keyword>', 'search keyword')
-          .option('--limit <n>', 'number of result cards to return', '20')
+          .option('--limit <n>', 'number of result cards to return', '20'))
           .action(async function (keyword: string) {
-            await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<LimitOptions>(), keyword }));
+            await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'keyword'>>(), keyword }));
           });
       },
     },
@@ -1189,10 +1193,10 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'comic',
       description: 'Collect rouman5 comic detail metadata and chapter sample',
       configure(command: Command): void {
-        command
-          .argument('<url-or-id>', 'comic detail URL or book id')
+        addSitePageIdOption(command
+          .argument('<url-or-id>', 'comic detail URL or book id'))
           .action(async function (target: string) {
-            await runSiteCommand(this, ctx => runComic(ctx, { target }));
+            await runSiteCommand(this, ctx => runComic(ctx, { ...this.opts<Omit<UrlOrIdOptions, 'target'>>(), target }));
           });
       },
     },
@@ -1200,10 +1204,10 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'chapters',
       description: 'List rouman5 chapter URLs for a comic without opening every chapter',
       configure(command: Command): void {
-        command
-          .argument('<url-or-id>', 'comic detail URL or book id')
+        addSitePageIdOption(command
+          .argument('<url-or-id>', 'comic detail URL or book id'))
           .action(async function (target: string) {
-            await runSiteCommand(this, ctx => runChapters(ctx, { target }));
+            await runSiteCommand(this, ctx => runChapters(ctx, { ...this.opts<Omit<UrlOrIdOptions, 'target'>>(), target }));
           });
       },
     },
@@ -1211,9 +1215,9 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'chapter',
       description: 'Collect rouman5 chapter metadata, image counts, and CDN domains without saving images',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<url-or-id>', 'chapter URL, book id, or bookId/chapterIndex')
-          .option('--metadata-only', 'only collect metadata; this adapter always behaves this way', true)
+          .option('--metadata-only', 'only collect metadata; this adapter always behaves this way', true))
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runChapter(ctx, { ...this.opts<ChapterOptions>(), target }));
           });
@@ -1223,11 +1227,11 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'download',
       description: 'Download rouman5 chapter images; use --apply to actually save files',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<url-or-id>', 'chapter URL, book id, or bookId/chapterIndex')
           .option('--out <path>', 'output directory', './downloads')
           .option('--apply', 'actually download images (default is dry-run)')
-          .option('--i-have-rights', 'confirm you have rights to download this content')
+          .option('--i-have-rights', 'confirm you have rights to download this content'))
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runDownload(ctx, { ...this.opts<DownloadOptions>(), target }));
           });
@@ -1237,7 +1241,7 @@ export const rouman5Adapter: SiteAdapter = {
       name: 'download-book',
       description: 'Download every chapter in a rouman5 book; use --apply to actually save files',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .alias('download-all')
           .argument('<url-or-id>', 'comic detail URL or book id')
           .option('--out <path>', 'output directory', './downloads')
@@ -1245,7 +1249,7 @@ export const rouman5Adapter: SiteAdapter = {
           .option('--to <n>', 'last 1-based chapter number to download')
           .option('--limit <n>', 'maximum number of chapters to download')
           .option('--apply', 'actually download images (default is dry-run)')
-          .option('--i-have-rights', 'confirm you have rights to download this content')
+          .option('--i-have-rights', 'confirm you have rights to download this content'))
           .action(async function (target: string) {
             await runSiteCommand(this, ctx => runDownloadBook(ctx, { ...this.opts<DownloadBookOptions>(), target }));
           });

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Command } from 'commander';
-import { addSitePageIdOption, runSiteCommand, clampInt, evaluateSiteExpression, listSiteNetwork, listSitePages, openOrNavigateSitePage, openSitePage, parseSitePageId, sleep } from './capabilities.js';
+import { addSitePageIdOption, runSiteCommand, clampInt, evaluateSiteExpression, listSiteNetwork, listSitePages, openOrNavigateSitePage, parseSitePageId, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'telegram';
@@ -10,6 +10,7 @@ const ORIGIN = 'https://t.me';
 interface ChannelOptions {
   channel: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface SearchOptions extends ChannelOptions {
@@ -20,10 +21,12 @@ interface PostOptions {
   target: string;
   postId?: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface ChatsOptions {
   limit?: string;
+  pageId?: string;
 }
 
 interface WebTargetOptions {
@@ -151,7 +154,7 @@ function telegramNextCommands(href: string | undefined): Record<string, string> 
   };
 }
 
-async function collectMessages(ctx: SiteCommandContext, url: string, limit: number): Promise<{
+async function collectMessages(ctx: SiteCommandContext, url: string, limit: number, pageId?: string): Promise<{
   url: string;
   title: string;
   channel?: {
@@ -174,7 +177,7 @@ async function collectMessages(ctx: SiteCommandContext, url: string, limit: numb
     hasUnsupportedMedia: boolean;
   }>;
 }> {
-  const page = await openSitePage(ctx.profile, url);
+  const page = await openOrNavigateSitePage(ctx.profile, url, pageId);
   await sleep(1800);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -215,7 +218,7 @@ async function collectMessages(ctx: SiteCommandContext, url: string, limit: numb
       blockSignals,
       messages
     };
-  })()`, page.id);
+  })()`, page.pageId);
   const value = result.value as {
     url: string;
     title: string;
@@ -258,24 +261,24 @@ function receipt(command: string, data: Awaited<ReturnType<typeof collectMessage
 
 async function runChannel(ctx: SiteCommandContext, options: ChannelOptions): Promise<SiteReceipt> {
   const channel = normalizeChannel(options.channel);
-  const data = await collectMessages(ctx, channelUrl(channel), clampLimit(options.limit));
+  const data = await collectMessages(ctx, channelUrl(channel), clampLimit(options.limit), options.pageId);
   return receipt('channel', data, { channelInput: options.channel, normalizedChannel: channel });
 }
 
 async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promise<SiteReceipt> {
   const channel = normalizeChannel(options.channel);
   const query = options.query.trim();
-  const data = await collectMessages(ctx, channelUrl(channel, query), clampLimit(options.limit));
+  const data = await collectMessages(ctx, channelUrl(channel, query), clampLimit(options.limit), options.pageId);
   return receipt('search', data, { channelInput: options.channel, normalizedChannel: channel, query });
 }
 
 async function runPost(ctx: SiteCommandContext, options: PostOptions): Promise<SiteReceipt> {
   const target = normalizePostTarget(options.target, options.postId);
-  const data = await collectMessages(ctx, channelUrl(target.channel, undefined, target.postId), clampLimit(options.limit, 25));
+  const data = await collectMessages(ctx, channelUrl(target.channel, undefined, target.postId), clampLimit(options.limit, 25), options.pageId);
   return receipt('post', data, { targetInput: options.target, normalizedChannel: target.channel, postId: target.postId });
 }
 
-async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
+async function collectChats(ctx: SiteCommandContext, limit: number, pageId?: string): Promise<{
   url: string;
   title: string;
   loggedIn: boolean;
@@ -288,7 +291,7 @@ async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
     unread?: string;
   }>;
 }> {
-  const page = await openSitePage(ctx.profile, 'https://web.telegram.org/a/');
+  const page = await openOrNavigateSitePage(ctx.profile, 'https://web.telegram.org/a/', pageId);
   await sleep(3500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -345,7 +348,7 @@ async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
       loginSignals,
       chats
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as {
     url: string;
     title: string;
@@ -356,7 +359,7 @@ async function collectChats(ctx: SiteCommandContext, limit: number): Promise<{
 }
 
 async function runChats(ctx: SiteCommandContext, options: ChatsOptions): Promise<SiteReceipt> {
-  const data = await collectChats(ctx, clampLimit(options.limit, 50, 200));
+  const data = await collectChats(ctx, clampLimit(options.limit, 50, 200), options.pageId);
   return {
     site: SITE,
     command: 'chats',
@@ -891,7 +894,7 @@ async function runOpenLink(ctx: SiteCommandContext, options: OpenLinkOptions): P
       next: ['Run siteflow telegram links <peer-or-url> to inspect available link indexes.'],
     };
   }
-  const opened = await openSitePage(ctx.profile, selected.url);
+  const opened = await openOrNavigateSitePage(ctx.profile, selected.url, options.pageId);
   return {
     site: SITE,
     command: 'open-link',
@@ -920,8 +923,8 @@ export const telegramAdapter: SiteAdapter = {
       name: 'chats',
       description: 'List visible Telegram Web chats for a manually logged-in local profile',
       configure(command: Command): void {
-        command
-          .option('--limit <n>', 'number of visible chats to return', '50')
+        addSitePageIdOption(command
+          .option('--limit <n>', 'number of visible chats to return', '50'))
           .action(async function () {
             await runSiteCommand(this, ctx => runChats(ctx, this.opts<ChatsOptions>()));
           });
@@ -1021,7 +1024,7 @@ export const telegramAdapter: SiteAdapter = {
           .argument('<channel-or-url>', 'public channel username, @handle, or t.me/s URL')
           .option('--limit <n>', 'number of visible posts to return', '20')
           .action(async function (channel: string) {
-            await runSiteCommand(this, ctx => runChannel(ctx, { ...this.opts<Pick<ChannelOptions, 'limit'>>(), channel }));
+            await runSiteCommand(this, ctx => runChannel(ctx, { ...this.opts<Omit<ChannelOptions, 'channel'>>(), channel }));
           });
       },
     },
@@ -1047,7 +1050,7 @@ export const telegramAdapter: SiteAdapter = {
           .argument('[post-id]', 'post id when the first argument is only a channel')
           .option('--limit <n>', 'number of visible surrounding posts to return', '25')
           .action(async function (target: string, postId?: string) {
-            await runSiteCommand(this, ctx => runPost(ctx, { ...this.opts<Pick<PostOptions, 'limit'>>(), target, postId }));
+            await runSiteCommand(this, ctx => runPost(ctx, { ...this.opts<Omit<PostOptions, 'target' | 'postId'>>(), target, postId }));
           });
       },
     },

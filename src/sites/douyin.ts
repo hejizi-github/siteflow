@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import {
   runSiteCommand,
+  addSitePageIdOption,
   uploadSiteTarget,
   captureSiteScreenshot,
   clickSiteTarget,
@@ -21,6 +22,7 @@ interface DouyinImageDraftOptions {
   saveDraft?: boolean;
   publish?: boolean;
   screenshot?: string;
+  pageId?: string;
 }
 
 interface DouyinVideoDraftOptions {
@@ -32,6 +34,7 @@ interface DouyinVideoDraftOptions {
   saveDraft?: boolean;
   publish?: boolean;
   screenshot?: string;
+  pageId?: string;
 }
 
 interface DouyinArticleDraftOptions {
@@ -42,12 +45,14 @@ interface DouyinArticleDraftOptions {
   saveDraft?: boolean;
   publish?: boolean;
   screenshot?: string;
+  pageId?: string;
 }
 
 interface DouyinReadOptions {
   limit?: string;
   range?: string;
   type?: string;
+  pageId?: string;
 }
 
 const UPLOAD_URL = 'https://creator.douyin.com/creator-micro/content/upload';
@@ -57,14 +62,17 @@ const CONTENT_ANALYTICS_URL = 'https://creator.douyin.com/creator-micro/data-cen
 const INSPIRATION_URL = 'https://creator.douyin.com/creator-micro/creative-guidance';
 const INDEX_URL = 'https://creator.douyin.com/creator-micro/creator-count/arithmetic-index';
 
-async function openUploadPage(profile: string): Promise<void> {
-  await ensureSitePage(profile, UPLOAD_URL, 'creator.douyin.com');
+async function openUploadPage(profile: string, pageIdValue?: string): Promise<number> {
+  const pageInfo = await ensureSitePage(profile, UPLOAD_URL, 'creator.douyin.com', pageIdValue);
+  const pageId = pageInfo.id;
   await sleep(2500);
-  const page = await readSiteSnapshot(profile);
+  const page = await readSiteSnapshot(profile, pageId);
   if (!page.url.includes('/content/upload')) {
-    await ensureSitePage(profile, UPLOAD_URL, 'creator.douyin.com/creator-micro/content/upload');
+    const navigated = await ensureSitePage(profile, UPLOAD_URL, 'creator.douyin.com/creator-micro/content/upload', String(pageId));
     await sleep(2500);
+    return navigated.id;
   }
+  return pageId;
 }
 
 function isAuthRequired(text: string, url: string): boolean {
@@ -94,8 +102,8 @@ function hasAny(text: string, patterns: string[]): boolean {
   return patterns.some(pattern => text.includes(pattern));
 }
 
-async function pageData(profile: string, maxText = 30_000): Promise<{ url: string; title: string; text: string }> {
-  const result = await evaluateSiteExpression(profile, `({ url: location.href, title: document.title, text: document.body.innerText.slice(0, ${JSON.stringify(maxText)}) })`);
+async function pageData(profile: string, maxText = 30_000, pageId?: number): Promise<{ url: string; title: string; text: string }> {
+  const result = await evaluateSiteExpression(profile, `({ url: location.href, title: document.title, text: document.body.innerText.slice(0, ${JSON.stringify(maxText)}) })`, pageId);
   const value = result.value as { url?: unknown; title?: unknown; text?: unknown };
   return {
     url: typeof value.url === 'string' ? value.url : '',
@@ -104,20 +112,20 @@ async function pageData(profile: string, maxText = 30_000): Promise<{ url: strin
   };
 }
 
-async function switchToImageTab(profile: string): Promise<void> {
-  await clickSiteTarget(profile, { text: '我知道了', timeoutMs: 3000 }).catch(() => undefined);
-  await clickSiteTarget(profile, { text: '发布图文', timeoutMs: 10_000 });
+async function switchToImageTab(profile: string, pageId?: number): Promise<void> {
+  await clickSiteTarget(profile, { pageId, text: '我知道了', timeoutMs: 3000 }).catch(() => undefined);
+  await clickSiteTarget(profile, { pageId, text: '发布图文', timeoutMs: 10_000 });
   await sleep(1500);
 }
 
-async function switchToVideoTab(profile: string): Promise<void> {
-  await clickSiteTarget(profile, { text: '我知道了', timeoutMs: 3000 }).catch(() => undefined);
-  await clickSiteTarget(profile, { text: '发布视频', timeoutMs: 10_000 });
+async function switchToVideoTab(profile: string, pageId?: number): Promise<void> {
+  await clickSiteTarget(profile, { pageId, text: '我知道了', timeoutMs: 3000 }).catch(() => undefined);
+  await clickSiteTarget(profile, { pageId, text: '发布视频', timeoutMs: 10_000 });
   await sleep(1500);
 }
 
-async function switchToArticleTab(profile: string): Promise<void> {
-  await clickSiteTarget(profile, { text: '发布文章', timeoutMs: 10_000 });
+async function switchToArticleTab(profile: string, pageId?: number): Promise<void> {
+  await clickSiteTarget(profile, { pageId, text: '发布文章', timeoutMs: 10_000 });
   await sleep(1500);
 }
 
@@ -147,9 +155,9 @@ async function finishAction(profile: string, options: { publish?: boolean; saveD
   return 'draft_filled_publish_not_clicked';
 }
 
-async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  await openUploadPage(ctx.profile);
-  const page = await readSiteSnapshot(ctx.profile);
+async function runStatus(ctx: SiteCommandContext, options: { pageId?: string } = {}): Promise<SiteReceipt> {
+  const pageId = await openUploadPage(ctx.profile, options.pageId);
+  const page = await readSiteSnapshot(ctx.profile, pageId);
   return {
     site: 'douyin',
     command: 'status',
@@ -182,9 +190,9 @@ async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
 }
 
 async function runWorks(ctx: SiteCommandContext, options: DouyinReadOptions): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, WORKS_URL, '/content/manage');
+  const pageInfo = await ensureSitePage(ctx.profile, WORKS_URL, '/content/manage', options.pageId);
   await sleep(3500);
-  const page = await pageData(ctx.profile);
+  const page = await pageData(ctx.profile, 30_000, pageInfo.id);
   if (isAuthRequired(page.text, page.url)) return authReceipt('works', page);
   const limit = toLimit(options.limit, 20, 50);
   const lines = linesOf(page.text);
@@ -207,9 +215,9 @@ async function runWorks(ctx: SiteCommandContext, options: DouyinReadOptions): Pr
 }
 
 async function runOverview(ctx: SiteCommandContext, options: DouyinReadOptions): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, OVERVIEW_URL, '/data-center/operation');
+  const pageInfo = await ensureSitePage(ctx.profile, OVERVIEW_URL, '/data-center/operation', options.pageId);
   await sleep(4000);
-  const page = await pageData(ctx.profile);
+  const page = await pageData(ctx.profile, 30_000, pageInfo.id);
   if (isAuthRequired(page.text, page.url)) return authReceipt('overview', page);
   const lines = linesOf(page.text);
   const limit = toLimit(options.limit, 20, 50);
@@ -232,9 +240,9 @@ async function runOverview(ctx: SiteCommandContext, options: DouyinReadOptions):
 }
 
 async function runContentAnalytics(ctx: SiteCommandContext, options: DouyinReadOptions): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, CONTENT_ANALYTICS_URL, '/data-center/content');
+  const pageInfo = await ensureSitePage(ctx.profile, CONTENT_ANALYTICS_URL, '/data-center/content', options.pageId);
   await sleep(4000);
-  const page = await pageData(ctx.profile);
+  const page = await pageData(ctx.profile, 30_000, pageInfo.id);
   if (isAuthRequired(page.text, page.url)) return authReceipt('content-analytics', page);
   const lines = linesOf(page.text);
   return {
@@ -254,9 +262,9 @@ async function runContentAnalytics(ctx: SiteCommandContext, options: DouyinReadO
 }
 
 async function runInspiration(ctx: SiteCommandContext, options: DouyinReadOptions): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, INSPIRATION_URL, '/creative-guidance');
+  const pageInfo = await ensureSitePage(ctx.profile, INSPIRATION_URL, '/creative-guidance', options.pageId);
   await sleep(4000);
-  const page = await pageData(ctx.profile, 40_000);
+  const page = await pageData(ctx.profile, 40_000, pageInfo.id);
   if (isAuthRequired(page.text, page.url)) return authReceipt('inspiration', page);
   const lines = linesOf(page.text);
   const limit = toLimit(options.limit, 20, 50);
@@ -279,9 +287,9 @@ async function runInspiration(ctx: SiteCommandContext, options: DouyinReadOption
 }
 
 async function runIndex(ctx: SiteCommandContext, options: DouyinReadOptions): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, INDEX_URL, '/creator-count/arithmetic-index');
+  const pageInfo = await ensureSitePage(ctx.profile, INDEX_URL, '/creator-count/arithmetic-index', options.pageId);
   await sleep(4000);
-  const page = await pageData(ctx.profile, 40_000);
+  const page = await pageData(ctx.profile, 40_000, pageInfo.id);
   if (isAuthRequired(page.text, page.url)) return authReceipt('index', page);
   const lines = linesOf(page.text);
   const limit = toLimit(options.limit, 30, 100);
@@ -490,12 +498,12 @@ async function runImageDraft(ctx: SiteCommandContext, options: DouyinImageDraftO
   const invalid = mutuallyExclusivePublishAndDraft(options);
   if (invalid) return { ...invalid, command: 'image-draft' };
   const screenshots: string[] = [];
-  await openUploadPage(ctx.profile);
-  await switchToImageTab(ctx.profile);
-  let page = await readSiteSnapshot(ctx.profile);
+  const pageId = await openUploadPage(ctx.profile, options.pageId);
+  await switchToImageTab(ctx.profile, pageId);
+  let page = await readSiteSnapshot(ctx.profile, pageId);
 
   if (isAuthRequired(page.text, page.url)) {
-    const shot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+    const shot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
     if (shot) screenshots.push(shot);
     return {
       site: 'douyin',
@@ -523,20 +531,20 @@ async function runImageDraft(ctx: SiteCommandContext, options: DouyinImageDraftO
         next: ['Rerun with --resume-existing to continue editing the existing draft, or clear it manually in the visible browser.'],
       };
     }
-    await clickSiteTarget(ctx.profile, { text: '继续编辑', timeoutMs: 8000 });
+    await clickSiteTarget(ctx.profile, { pageId, text: '继续编辑', timeoutMs: 8000 });
     await sleep(2500);
-    page = await readSiteSnapshot(ctx.profile);
+    page = await readSiteSnapshot(ctx.profile, pageId);
   }
 
   if (options.image?.length) {
     const images = options.image;
-    await uploadSiteTarget(ctx.profile, {
+    await uploadSiteTarget(ctx.profile, { pageId,
       selector: 'input[type="file"]',
       nth: 1,
       files: images,
       timeoutMs: 30_000,
     }).catch(async () => {
-      await uploadSiteTarget(ctx.profile, {
+      await uploadSiteTarget(ctx.profile, { pageId,
         selector: 'input[type="file"]',
         nth: 0,
         files: images,
@@ -547,7 +555,7 @@ async function runImageDraft(ctx: SiteCommandContext, options: DouyinImageDraftO
   }
 
   if (options.title) {
-    await typeIntoSiteTarget(ctx.profile, { selector: 'input[placeholder="添加作品标题"]', value: options.title, timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: 'input[placeholder="添加作品标题"]', value: options.title, timeoutMs: 15_000 });
   }
 
   const bodyParts = [
@@ -555,7 +563,7 @@ async function runImageDraft(ctx: SiteCommandContext, options: DouyinImageDraftO
     ...(options.topic || []).map(topic => topic.startsWith('#') ? topic : `#${topic}`),
   ].filter(Boolean);
   if (bodyParts.length) {
-    await typeIntoSiteTarget(ctx.profile, {
+    await typeIntoSiteTarget(ctx.profile, { pageId,
       selector: '[contenteditable="true"]',
       nth: 0,
       value: bodyParts.join(' '),
@@ -565,9 +573,9 @@ async function runImageDraft(ctx: SiteCommandContext, options: DouyinImageDraftO
 
   const finalState = await finishAction(ctx.profile, options);
 
-  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (shot) screenshots.push(shot);
-  page = await readSiteSnapshot(ctx.profile);
+  page = await readSiteSnapshot(ctx.profile, pageId);
   return {
     site: 'douyin',
     command: 'image-draft',
@@ -594,9 +602,9 @@ async function runVideoDraft(ctx: SiteCommandContext, options: DouyinVideoDraftO
   const invalid = mutuallyExclusivePublishAndDraft(options);
   if (invalid) return { ...invalid, command: 'video-draft' };
   const screenshots: string[] = [];
-  await openUploadPage(ctx.profile);
-  await switchToVideoTab(ctx.profile);
-  let page = await readSiteSnapshot(ctx.profile);
+  const pageId = await openUploadPage(ctx.profile, options.pageId);
+  await switchToVideoTab(ctx.profile, pageId);
+  let page = await readSiteSnapshot(ctx.profile, pageId);
 
   if (isAuthRequired(page.text, page.url)) {
     return {
@@ -624,10 +632,10 @@ async function runVideoDraft(ctx: SiteCommandContext, options: DouyinVideoDraftO
         next: ['Rerun with --resume-existing to continue editing the existing unpublished post, or clear it manually.'],
       };
     }
-    await clickSiteTarget(ctx.profile, { text: '继续编辑', timeoutMs: 8000 });
+    await clickSiteTarget(ctx.profile, { pageId, text: '继续编辑', timeoutMs: 8000 });
     await sleep(2500);
   } else if (options.video) {
-    await uploadSiteTarget(ctx.profile, {
+    await uploadSiteTarget(ctx.profile, { pageId,
       selector: 'input[type="file"]',
       nth: 0,
       files: [options.video],
@@ -637,16 +645,16 @@ async function runVideoDraft(ctx: SiteCommandContext, options: DouyinVideoDraftO
   }
 
   if (options.title) {
-    await typeIntoSiteTarget(ctx.profile, { selector: 'input[placeholder="填写作品标题，为作品获得更多流量"]', value: options.title, timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: 'input[placeholder="填写作品标题，为作品获得更多流量"]', value: options.title, timeoutMs: 15_000 });
   }
   const bodyParts = [options.body, ...(options.topic || []).map(topic => topic.startsWith('#') ? topic : `#${topic}`)].filter(Boolean);
   if (bodyParts.length) {
-    await typeIntoSiteTarget(ctx.profile, { selector: '[contenteditable="true"]', nth: 0, value: bodyParts.join(' '), timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: '[contenteditable="true"]', nth: 0, value: bodyParts.join(' '), timeoutMs: 15_000 });
   }
   const finalState = await finishAction(ctx.profile, options);
-  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (shot) screenshots.push(shot);
-  page = await readSiteSnapshot(ctx.profile);
+  page = await readSiteSnapshot(ctx.profile, pageId);
   return {
     site: 'douyin',
     command: 'video-draft',
@@ -672,9 +680,9 @@ async function runArticleDraft(ctx: SiteCommandContext, options: DouyinArticleDr
   const invalid = mutuallyExclusivePublishAndDraft(options);
   if (invalid) return { ...invalid, command: 'article-draft' };
   const screenshots: string[] = [];
-  await openUploadPage(ctx.profile);
-  await switchToArticleTab(ctx.profile);
-  let page = await readSiteSnapshot(ctx.profile);
+  const pageId = await openUploadPage(ctx.profile, options.pageId);
+  await switchToArticleTab(ctx.profile, pageId);
+  let page = await readSiteSnapshot(ctx.profile, pageId);
 
   if (isAuthRequired(page.text, page.url)) {
     return {
@@ -702,26 +710,26 @@ async function runArticleDraft(ctx: SiteCommandContext, options: DouyinArticleDr
         next: ['Rerun with --resume-existing to continue editing the existing unpublished article, or clear it manually.'],
       };
     }
-    await clickSiteTarget(ctx.profile, { text: '继续编辑', timeoutMs: 8000 });
+    await clickSiteTarget(ctx.profile, { pageId, text: '继续编辑', timeoutMs: 8000 });
     await sleep(2500);
   } else if (page.text.includes('我要发文')) {
-    await clickSiteTarget(ctx.profile, { text: '我要发文', timeoutMs: 10_000 });
+    await clickSiteTarget(ctx.profile, { pageId, text: '我要发文', timeoutMs: 10_000 });
     await sleep(3000);
   }
 
   if (options.title) {
-    await typeIntoSiteTarget(ctx.profile, { selector: 'input[placeholder="请输入文章标题，最多不超过30个字"]', value: options.title, timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: 'input[placeholder="请输入文章标题，最多不超过30个字"]', value: options.title, timeoutMs: 15_000 });
   }
   if (options.summary) {
-    await typeIntoSiteTarget(ctx.profile, { selector: 'input[placeholder="添加内容摘要或文章精彩部分吸引用户阅读，最多不超过30个字"]', value: options.summary, timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: 'input[placeholder="添加内容摘要或文章精彩部分吸引用户阅读，最多不超过30个字"]', value: options.summary, timeoutMs: 15_000 });
   }
   if (options.body) {
-    await typeIntoSiteTarget(ctx.profile, { selector: '[contenteditable="true"]', nth: 0, value: options.body, timeoutMs: 15_000 });
+    await typeIntoSiteTarget(ctx.profile, { pageId, selector: '[contenteditable="true"]', nth: 0, value: options.body, timeoutMs: 15_000 });
   }
   const finalState = await finishAction(ctx.profile, options);
-  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (shot) screenshots.push(shot);
-  page = await readSiteSnapshot(ctx.profile);
+  page = await readSiteSnapshot(ctx.profile, pageId);
   return {
     site: 'douyin',
     command: 'article-draft',
@@ -772,8 +780,8 @@ export const douyinAdapter: SiteAdapter = {
       name: 'status',
       description: 'Observe current Douyin creator upload page',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, runStatus);
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<{ pageId?: string }>()));
         });
       },
     },
@@ -781,13 +789,14 @@ export const douyinAdapter: SiteAdapter = {
       name: 'image',
       description: 'Publish a Douyin image-text post',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--title <text>', 'post title')
           .requiredOption('--body <text>', 'post body')
           .requiredOption('--image <path...>', 'image paths to upload')
           .option('--topic <name...>', 'topics to append to the body')
           .option('--resume-existing', 'continue editing an existing unpublished image-text post')
           .option('--screenshot <path>', 'save screenshot receipt')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runImagePublish(ctx, this.opts<DouyinImageDraftOptions>()));
           });
@@ -797,13 +806,14 @@ export const douyinAdapter: SiteAdapter = {
       name: 'video',
       description: 'Publish a Douyin video post',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--title <text>', 'post title')
           .requiredOption('--body <text>', 'post body')
           .requiredOption('--video <path>', 'video path to upload')
           .option('--topic <name...>', 'topics to append to the body')
           .option('--resume-existing', 'continue editing an existing unpublished video post')
           .option('--screenshot <path>', 'save screenshot receipt')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runVideoPublish(ctx, this.opts<DouyinVideoDraftOptions>()));
           });
@@ -813,12 +823,13 @@ export const douyinAdapter: SiteAdapter = {
       name: 'article',
       description: 'Publish a Douyin article post',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--title <text>', 'article title')
           .requiredOption('--summary <text>', 'article summary')
           .requiredOption('--body <text>', 'article body')
           .option('--resume-existing', 'continue editing an existing unpublished article')
           .option('--screenshot <path>', 'save screenshot receipt')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runArticlePublish(ctx, this.opts<DouyinArticleDraftOptions>()));
           });
@@ -828,8 +839,9 @@ export const douyinAdapter: SiteAdapter = {
       name: 'works',
       description: 'Read Douyin creator works and visible performance metrics',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--limit <n>', 'maximum works to return', '20')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runWorks(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -839,8 +851,9 @@ export const douyinAdapter: SiteAdapter = {
       name: 'list',
       description: 'Human-friendly alias for works: list your Douyin posts',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--limit <n>', 'maximum works to return', '20')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runList(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -850,9 +863,10 @@ export const douyinAdapter: SiteAdapter = {
       name: 'overview',
       description: 'Read Douyin account overview, diagnostics, and hot topic hints',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--range <range>', 'requested range label, usually current|yesterday|7d|30d', 'current')
           .option('--limit <n>', 'maximum hot topics/videos to return', '20')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runOverview(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -862,8 +876,9 @@ export const douyinAdapter: SiteAdapter = {
       name: 'content-analytics',
       description: 'Read Douyin post analytics and content performance summary',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--range <range>', 'requested range label, usually current|7d|30d', 'current')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runContentAnalytics(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -873,9 +888,10 @@ export const douyinAdapter: SiteAdapter = {
       name: 'stats',
       description: 'Human-friendly account and content stats summary',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--range <range>', 'requested range label, usually current|7d|30d', 'current')
           .option('--limit <n>', 'maximum hot topics/videos to return', '10')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runStats(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -885,8 +901,9 @@ export const douyinAdapter: SiteAdapter = {
       name: 'inspiration',
       description: 'Read Douyin creative inspiration, hot videos, and hot words',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--limit <n>', 'maximum hot videos to return', '20')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runInspiration(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -896,9 +913,10 @@ export const douyinAdapter: SiteAdapter = {
       name: 'index',
       description: 'Read Douyin realtime and rising hot-topic index',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--type <type>', 'all, realtime, or rising', 'all')
           .option('--limit <n>', 'maximum index items to return', '30')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runIndex(ctx, this.opts<DouyinReadOptions>()));
           });
@@ -908,9 +926,10 @@ export const douyinAdapter: SiteAdapter = {
       name: 'ideas',
       description: 'Human-friendly topic ideas from inspiration and Douyin index',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--type <type>', 'all, realtime, or rising', 'all')
           .option('--limit <n>', 'maximum items per source', '10')
+          )
           .action(async function () {
             await runSiteCommand(this, ctx => runIdeas(ctx, this.opts<DouyinReadOptions>()));
           });

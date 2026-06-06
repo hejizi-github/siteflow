@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { runSiteCommand, clampInt, evaluateSiteExpression, openSitePage, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'arxiv';
@@ -8,15 +8,18 @@ const ORIGIN = 'https://arxiv.org';
 interface SearchOptions {
   query: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface PaperOptions {
   id: string;
+  pageId?: string;
 }
 
 interface LatestOptions {
   category?: string;
   limit?: string;
+  pageId?: string;
 }
 
 interface PdfOptions {
@@ -38,14 +41,14 @@ function searchPageSize(limit: number): number {
   return 200;
 }
 
-async function collectSearch(ctx: SiteCommandContext, query: string, limit: number): Promise<{
+async function collectSearch(ctx: SiteCommandContext, query: string, limit: number, pageId?: string): Promise<{
   url: string;
   title: string;
   query: string;
   papers: Array<{ id?: string; title: string; authors: string[]; abstract?: string; submitted?: string; absUrl?: string; pdfUrl?: string; subjects?: string[] }>;
 }> {
   const url = `${ORIGIN}/search/?query=${encodeURIComponent(query)}&searchtype=all&abstracts=show&order=-announced_date_first&size=${encodeURIComponent(String(searchPageSize(limit)))}`;
-  const page = await openSitePage(ctx.profile, url);
+  const page = await openOrNavigateSitePage(ctx.profile, url, pageId);
   await sleep(1500);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -64,7 +67,7 @@ async function collectSearch(ctx: SiteCommandContext, query: string, limit: numb
       return { id, title, authors, abstract, submitted, absUrl, pdfUrl: pdfLink ? abs(pdfLink.getAttribute('href') || '') : undefined, subjects };
     }).filter(paper => paper.title);
     return { url: location.href, title: document.title, query: ${JSON.stringify(query)}, papers };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as {
     url: string;
     title: string;
@@ -73,7 +76,7 @@ async function collectSearch(ctx: SiteCommandContext, query: string, limit: numb
   };
 }
 
-async function collectPaper(ctx: SiteCommandContext, id: string): Promise<{
+async function collectPaper(ctx: SiteCommandContext, id: string, pageId?: string): Promise<{
   url: string;
   title: string;
   id: string;
@@ -85,7 +88,7 @@ async function collectPaper(ctx: SiteCommandContext, id: string): Promise<{
   sourceUrl: string;
 }> {
   const normalized = normalizeId(id);
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/abs/${encodeURIComponent(normalized)}`);
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/abs/${encodeURIComponent(normalized)}`, pageId);
   await sleep(1200);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -105,18 +108,18 @@ async function collectPaper(ctx: SiteCommandContext, id: string): Promise<{
       pdfUrl: 'https://arxiv.org/pdf/' + id,
       sourceUrl: 'https://arxiv.org/e-print/' + id
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as { url: string; title: string; id: string; paperTitle?: string; authors: string[]; abstract?: string; subjects?: string[]; pdfUrl: string; sourceUrl: string };
 }
 
-async function collectLatest(ctx: SiteCommandContext, category: string, limit: number): Promise<{
+async function collectLatest(ctx: SiteCommandContext, category: string, limit: number, pageId?: string): Promise<{
   url: string;
   title: string;
   category: string;
   papers: Array<{ id?: string; title: string; authors: string[]; absUrl?: string; pdfUrl?: string }>;
 }> {
   const normalized = category || 'cs';
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/list/${encodeURIComponent(normalized)}/new`);
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/list/${encodeURIComponent(normalized)}/new`, pageId);
   await sleep(1200);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -133,13 +136,13 @@ async function collectLatest(ctx: SiteCommandContext, category: string, limit: n
       return { id, title, authors, absUrl, pdfUrl: pdfLink ? abs(pdfLink.getAttribute('href') || '') : undefined };
     }).filter(paper => paper.title).slice(0, ${JSON.stringify(limit)});
     return { url: location.href, title: document.title, category: ${JSON.stringify(normalized)}, papers };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as { url: string; title: string; category: string; papers: Array<{ id?: string; title: string; authors: string[]; absUrl?: string; pdfUrl?: string }> };
 }
 
 async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promise<SiteReceipt> {
   const query = options.query.trim();
-  const data = await collectSearch(ctx, query, clampLimit(options.limit));
+  const data = await collectSearch(ctx, query, clampLimit(options.limit), options.pageId);
   return {
     site: SITE,
     command: 'search',
@@ -157,7 +160,7 @@ async function runSearch(ctx: SiteCommandContext, options: SearchOptions): Promi
 }
 
 async function runPaper(ctx: SiteCommandContext, options: PaperOptions): Promise<SiteReceipt> {
-  const data = await collectPaper(ctx, options.id);
+  const data = await collectPaper(ctx, options.id, options.pageId);
   return {
     site: SITE,
     command: 'paper',
@@ -180,7 +183,7 @@ async function runPaper(ctx: SiteCommandContext, options: PaperOptions): Promise
 
 async function runLatest(ctx: SiteCommandContext, options: LatestOptions): Promise<SiteReceipt> {
   const category = options.category || 'cs';
-  const data = await collectLatest(ctx, category, clampLimit(options.limit));
+  const data = await collectLatest(ctx, category, clampLimit(options.limit), options.pageId);
   return {
     site: SITE,
     command: 'latest',
@@ -246,11 +249,11 @@ export const arxivAdapter: SiteAdapter = {
       name: 'search',
       description: 'Search arXiv papers by query',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .argument('<query>', 'search query')
-          .option('--limit <n>', 'number of papers to return', '25')
+          .option('--limit <n>', 'number of papers to return', '25'))
           .action(async function (query: string) {
-            await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Pick<SearchOptions, 'limit'>>(), query }));
+            await runSiteCommand(this, ctx => runSearch(ctx, { ...this.opts<Omit<SearchOptions, 'query'>>(), query }));
           });
       },
     },
@@ -258,10 +261,10 @@ export const arxivAdapter: SiteAdapter = {
       name: 'paper',
       description: 'Collect one arXiv paper metadata page',
       configure(command: Command): void {
-        command
-          .argument('<id>', 'arXiv id or abs/pdf URL')
+        addSitePageIdOption(command
+          .argument('<id>', 'arXiv id or abs/pdf URL'))
           .action(async function (id: string) {
-            await runSiteCommand(this, ctx => runPaper(ctx, { id }));
+            await runSiteCommand(this, ctx => runPaper(ctx, { ...this.opts<Omit<PaperOptions, 'id'>>(), id }));
           });
       },
     },
@@ -269,9 +272,9 @@ export const arxivAdapter: SiteAdapter = {
       name: 'latest',
       description: 'Collect latest arXiv submissions for a category',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--category <cat>', 'arXiv category such as cs, cs.AI, stat.ML', 'cs')
-          .option('--limit <n>', 'number of papers to return', '25')
+          .option('--limit <n>', 'number of papers to return', '25'))
           .action(async function () {
             await runSiteCommand(this, ctx => runLatest(ctx, this.opts<LatestOptions>()));
           });

@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import {
   runSiteCommand,
+  addSitePageIdOption,
   captureSiteScreenshot,
   clickSiteTarget,
   ensureSitePage,
@@ -20,17 +21,19 @@ interface JimengGenerateOptions {
   screenshot?: string;
   wait: string;
   submit?: boolean;
+  pageId?: string;
 }
 
 async function runGenerate(ctx: SiteCommandContext, options: JimengGenerateOptions): Promise<SiteReceipt> {
   const screenshots: string[] = [];
-  await ensureSitePage(ctx.profile, options.url || 'https://jimeng.jianying.com/ai-tool/generate', 'jimeng.jianying.com');
-  await typeIntoSiteTarget(ctx.profile, { selector: options.inputSelector || 'textarea', nth: 0, value: options.prompt });
-  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot);
+  const pageInfo = await ensureSitePage(ctx.profile, options.url || 'https://jimeng.jianying.com/ai-tool/generate', 'jimeng.jianying.com', options.pageId);
+  const pageId = pageInfo.id;
+  await typeIntoSiteTarget(ctx.profile, { pageId, selector: options.inputSelector || 'textarea', nth: 0, value: options.prompt });
+  const shot = await captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (shot) screenshots.push(shot);
 
   if (!options.submit) {
-    const page = await readSiteSnapshot(ctx.profile);
+    const page = await readSiteSnapshot(ctx.profile, pageId);
     return {
       site: 'jimeng',
       command: 'generate',
@@ -44,17 +47,17 @@ async function runGenerate(ctx: SiteCommandContext, options: JimengGenerateOptio
   }
 
   if (options.submitText) {
-    await clickSiteTarget(ctx.profile, { text: options.submitText, exact: false, clickableParent: true });
+    await clickSiteTarget(ctx.profile, { pageId, text: options.submitText, exact: false, clickableParent: true });
   } else {
-    await clickSiteTarget(ctx.profile, { text: '搜索', exact: false, clickableParent: true, timeoutMs: 10_000 }).catch(async () => {
-      await clickSiteTarget(ctx.profile, { x: 1100, y: 720 });
+    await clickSiteTarget(ctx.profile, { pageId, text: '搜索', exact: false, clickableParent: true, timeoutMs: 10_000 }).catch(async () => {
+      await clickSiteTarget(ctx.profile, { pageId, x: 1100, y: 720 });
     });
   }
   const waitMs = Number.parseInt(options.wait, 10);
   await sleep(Number.isFinite(waitMs) ? waitMs : 60_000);
 
-  const page = await readSiteSnapshot(ctx.profile);
-  const completed = page.text.includes('图片生成完成') || await waitForText(ctx.profile, '生成完成', 1000);
+  const page = await readSiteSnapshot(ctx.profile, pageId);
+  const completed = page.text.includes('图片生成完成') || await waitForText(ctx.profile, '生成完成', 1000, pageId);
   const submissionLikely = !completed && (page.text.includes('图片生成') || page.text.includes('搜索'));
   const errors = await readRecentSiteErrors(ctx.profile, 20);
   return {
@@ -74,9 +77,9 @@ async function runGenerate(ctx: SiteCommandContext, options: JimengGenerateOptio
   };
 }
 
-async function runStatus(ctx: SiteCommandContext): Promise<SiteReceipt> {
-  await ensureSitePage(ctx.profile, 'https://jimeng.jianying.com/ai-tool/generate', 'jimeng.jianying.com');
-  const page = await readSiteSnapshot(ctx.profile);
+async function runStatus(ctx: SiteCommandContext, options: { pageId?: string } = {}): Promise<SiteReceipt> {
+  const pageInfo = await ensureSitePage(ctx.profile, 'https://jimeng.jianying.com/ai-tool/generate', 'jimeng.jianying.com', options.pageId);
+  const page = await readSiteSnapshot(ctx.profile, pageInfo.id);
   return {
     site: 'jimeng',
     command: 'status',
@@ -96,14 +99,14 @@ export const jimengAdapter: SiteAdapter = {
       name: 'generate',
       description: 'Fill a Jimeng prompt and optionally submit generation',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .requiredOption('--prompt <text>', 'generation prompt')
           .option('--url <url>', 'Jimeng generation URL')
           .option('--input-selector <selector>', 'prompt input selector', 'textarea')
           .option('--submit-text <text>', 'submit button visible text')
           .option('--screenshot <path>', 'save filled-form screenshot')
           .option('--wait <ms>', 'milliseconds to wait after submit', '60000')
-          .option('--submit', 'submit generation after filling')
+          .option('--submit', 'submit generation after filling'))
           .action(async function () {
             await runSiteCommand(this, ctx => runGenerate(ctx, this.opts<JimengGenerateOptions>()));
           });
@@ -113,8 +116,8 @@ export const jimengAdapter: SiteAdapter = {
       name: 'status',
       description: 'Observe current Jimeng page state',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, runStatus);
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<{ pageId?: string }>()));
         });
       },
     },

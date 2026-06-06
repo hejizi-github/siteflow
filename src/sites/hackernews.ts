@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { runSiteCommand, clampInt, evaluateSiteExpression, openSitePage, sleep } from './capabilities.js';
+import { runSiteCommand, addSitePageIdOption, clampInt, evaluateSiteExpression, openOrNavigateSitePage, sleep } from './capabilities.js';
 import type { SiteAdapter, SiteCommandContext, SiteReceipt } from './capabilities.js';
 
 const SITE = 'hackernews';
@@ -7,19 +7,22 @@ const ORIGIN = 'https://news.ycombinator.com';
 
 interface LimitOptions {
   limit?: string;
+  pageId?: string;
 }
 
 interface ItemOptions {
   id: string;
+  pageId?: string;
 }
 
 interface UserOptions {
   id: string;
+  pageId?: string;
 }
 
 const clampLimit = (value: string | undefined, fallback = 30, max = 100): number => clampInt(value, fallback, 1, max);
 
-async function collectListing(ctx: SiteCommandContext, path: string, limit: number): Promise<{
+async function collectListing(ctx: SiteCommandContext, path: string, limit: number, pageId?: string): Promise<{
   url: string;
   title: string;
   items: Array<{
@@ -36,7 +39,7 @@ async function collectListing(ctx: SiteCommandContext, path: string, limit: numb
   }>;
   moreUrl?: string;
 }> {
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/${path}`);
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/${path}`, pageId);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -64,7 +67,7 @@ async function collectListing(ctx: SiteCommandContext, path: string, limit: numb
     }).filter(item => item.title);
     const more = document.querySelector('a.morelink');
     return { url: location.href, title: document.title, items, moreUrl: more ? abs(more.getAttribute('href') || '') : undefined };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as {
     url: string;
     title: string;
@@ -73,7 +76,7 @@ async function collectListing(ctx: SiteCommandContext, path: string, limit: numb
   };
 }
 
-async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
+async function collectItem(ctx: SiteCommandContext, id: string, pageId?: string): Promise<{
   url: string;
   title: string;
   story?: {
@@ -87,7 +90,7 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
   };
   comments: Array<{ user?: string; age?: string; text: string; replyUrl?: string }>;
 }> {
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/item?id=${encodeURIComponent(id)}`);
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/item?id=${encodeURIComponent(id)}`, pageId);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -119,7 +122,7 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
       } : undefined,
       comments
     };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as {
     url: string;
     title: string;
@@ -128,8 +131,8 @@ async function collectItem(ctx: SiteCommandContext, id: string): Promise<{
   };
 }
 
-async function collectUser(ctx: SiteCommandContext, id: string): Promise<{ url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> }> {
-  const page = await openSitePage(ctx.profile, `${ORIGIN}/user?id=${encodeURIComponent(id)}`);
+async function collectUser(ctx: SiteCommandContext, id: string, pageId?: string): Promise<{ url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> }> {
+  const page = await openOrNavigateSitePage(ctx.profile, `${ORIGIN}/user?id=${encodeURIComponent(id)}`, pageId);
   await sleep(1000);
   const result = await evaluateSiteExpression(ctx.profile, `(() => {
     const abs = href => { try { return new URL(href, location.href).href } catch { return href } };
@@ -148,7 +151,7 @@ async function collectUser(ctx: SiteCommandContext, id: string): Promise<{ url: 
       .map(a => ({ text: clean(a.textContent), url: abs(a.getAttribute('href') || '') }))
       .filter(link => link.text && !['login', 'Hacker News', 'new', 'past', 'comments', 'ask', 'show', 'jobs', 'submit'].includes(link.text));
     return { url: location.href, title: document.title, profile, links };
-  })()`, page.id);
+  })()`, page.pageId);
   return result.value as { url: string; title: string; profile: Record<string, string>; links: Array<{ text: string; url: string }> };
 }
 
@@ -160,7 +163,7 @@ async function runListing(ctx: SiteCommandContext, command: 'frontpage' | 'newes
     show: 'show',
     jobs: 'jobs',
   };
-  const data = await collectListing(ctx, paths[command], clampLimit(options.limit));
+  const data = await collectListing(ctx, paths[command], clampLimit(options.limit), options.pageId);
   return {
     site: SITE,
     command,
@@ -178,7 +181,7 @@ async function runListing(ctx: SiteCommandContext, command: 'frontpage' | 'newes
 }
 
 async function runItem(ctx: SiteCommandContext, options: ItemOptions): Promise<SiteReceipt> {
-  const data = await collectItem(ctx, options.id);
+  const data = await collectItem(ctx, options.id, options.pageId);
   return {
     site: SITE,
     command: 'item',
@@ -197,7 +200,7 @@ async function runItem(ctx: SiteCommandContext, options: ItemOptions): Promise<S
 }
 
 async function runUser(ctx: SiteCommandContext, options: UserOptions): Promise<SiteReceipt> {
-  const data = await collectUser(ctx, options.id);
+  const data = await collectUser(ctx, options.id, options.pageId);
   return {
     site: SITE,
     command: 'user',
@@ -223,8 +226,8 @@ export const hackernewsAdapter: SiteAdapter = {
       name,
       description: `Collect Hacker News ${name} listing`,
       configure(command: Command): void {
-        command
-          .option('--limit <n>', 'number of stories to return', '30')
+        addSitePageIdOption(command
+          .option('--limit <n>', 'number of stories to return', '30'))
           .action(async function () {
             await runSiteCommand(this, ctx => runListing(ctx, name, this.opts<LimitOptions>()));
           });
@@ -234,10 +237,10 @@ export const hackernewsAdapter: SiteAdapter = {
       name: 'item',
       description: 'Collect one Hacker News story and visible comments',
       configure(command: Command): void {
-        command
-          .argument('<id>', 'HN item id')
+        addSitePageIdOption(command
+          .argument('<id>', 'HN item id'))
           .action(async function (id: string) {
-            await runSiteCommand(this, ctx => runItem(ctx, { id }));
+            await runSiteCommand(this, ctx => runItem(ctx, { ...this.opts<Omit<ItemOptions, 'id'>>(), id }));
           });
       },
     },
@@ -245,10 +248,10 @@ export const hackernewsAdapter: SiteAdapter = {
       name: 'user',
       description: 'Collect one public Hacker News user profile',
       configure(command: Command): void {
-        command
-          .argument('<id>', 'HN username')
+        addSitePageIdOption(command
+          .argument('<id>', 'HN username'))
           .action(async function (id: string) {
-            await runSiteCommand(this, ctx => runUser(ctx, { id }));
+            await runSiteCommand(this, ctx => runUser(ctx, { ...this.opts<Omit<UserOptions, 'id'>>(), id }));
           });
       },
     },

@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import {
   runSiteCommand,
+  addSitePageIdOption,
   captureSiteScreenshot,
   clickSiteTarget,
   ensureSitePage,
@@ -31,6 +32,7 @@ interface XhsDraftOptions {
   topic?: string[];
   url?: string;
   screenshot?: string;
+  pageId?: string;
 }
 
 async function readBody(value: string | undefined, file: string | undefined): Promise<string | undefined> {
@@ -39,22 +41,23 @@ async function readBody(value: string | undefined, file: string | undefined): Pr
   return fs.readFile(file, 'utf-8');
 }
 
-async function addTopic(profile: string, topic: string, deps = xhsDeps): Promise<void> {
+async function addTopic(profile: string, topic: string, pageId?: number, deps = xhsDeps): Promise<void> {
   const normalized = topic.startsWith('#') ? topic : `#${topic}`;
-  await deps.typeIntoSiteTarget(profile, { selector: '[contenteditable="true"]', nth: 0, value: ` ${normalized}`, clear: false });
+  await deps.typeIntoSiteTarget(profile, { pageId, selector: '[contenteditable="true"]', nth: 0, value: ` ${normalized}`, clear: false });
   await deps.sleep(1500);
-  await deps.clickSiteTarget(profile, { text: normalized.replace(/^#/, ''), exact: false, clickableParent: true }).catch(async () => {
-    await deps.clickSiteTarget(profile, { text: normalized, exact: false, clickableParent: true });
+  await deps.clickSiteTarget(profile, { pageId, text: normalized.replace(/^#/, ''), exact: false, clickableParent: true }).catch(async () => {
+    await deps.clickSiteTarget(profile, { pageId, text: normalized, exact: false, clickableParent: true });
   });
 }
 
 async function runDraft(ctx: SiteCommandContext, options: XhsDraftOptions, deps = xhsDeps): Promise<SiteReceipt> {
   const screenshots: string[] = [];
-  await deps.ensureSitePage(ctx.profile, options.url || 'https://creator.xiaohongshu.com/publish/publish?source=official', 'creator.xiaohongshu.com');
+  const pageInfo = await deps.ensureSitePage(ctx.profile, options.url || 'https://creator.xiaohongshu.com/publish/publish?source=official', 'creator.xiaohongshu.com', options.pageId);
+  const pageId = pageInfo.id;
   await deps.sleep(2000);
-  const initialPage = await deps.readSiteSnapshot(ctx.profile);
+  const initialPage = await deps.readSiteSnapshot(ctx.profile, pageId);
   if (initialPage.url.includes('/login') || initialPage.text.includes('短信登录')) {
-    const shot = await deps.captureSiteScreenshot(ctx.profile, options.screenshot);
+    const shot = await deps.captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
     if (shot) screenshots.push(shot);
     return {
       site: 'xhs',
@@ -77,21 +80,21 @@ async function runDraft(ctx: SiteCommandContext, options: XhsDraftOptions, deps 
   }
 
   if (options.title) {
-    await deps.typeIntoSiteTarget(ctx.profile, { selector: 'input', nth: 0, value: options.title });
+    await deps.typeIntoSiteTarget(ctx.profile, { pageId, selector: 'input', nth: 0, value: options.title });
   }
 
   const body = await readBody(options.body, options.bodyFile);
   if (body) {
-    await deps.typeIntoSiteTarget(ctx.profile, { selector: '[contenteditable=\"true\"]', nth: 0, value: body });
+    await deps.typeIntoSiteTarget(ctx.profile, { pageId, selector: '[contenteditable=\"true\"]', nth: 0, value: body });
   }
 
   for (const topic of options.topic || []) {
-    await addTopic(ctx.profile, topic, deps);
+    await addTopic(ctx.profile, topic, pageId, deps);
   }
 
-  const shot = await deps.captureSiteScreenshot(ctx.profile, options.screenshot);
+  const shot = await deps.captureSiteScreenshot(ctx.profile, options.screenshot, pageId);
   if (shot) screenshots.push(shot);
-  const page = await deps.readSiteSnapshot(ctx.profile);
+  const page = await deps.readSiteSnapshot(ctx.profile, pageId);
   const errors = await deps.readRecentSiteErrors(ctx.profile, 20);
   return {
     site: 'xhs',
@@ -111,9 +114,9 @@ async function runDraft(ctx: SiteCommandContext, options: XhsDraftOptions, deps 
   };
 }
 
-async function runStatus(ctx: SiteCommandContext, deps = xhsDeps): Promise<SiteReceipt> {
-  await deps.ensureSitePage(ctx.profile, 'https://creator.xiaohongshu.com/publish/publish?source=official', 'creator.xiaohongshu.com');
-  const page = await deps.readSiteSnapshot(ctx.profile);
+async function runStatus(ctx: SiteCommandContext, options: { pageId?: string } = {}, deps = xhsDeps): Promise<SiteReceipt> {
+  const pageInfo = await deps.ensureSitePage(ctx.profile, 'https://creator.xiaohongshu.com/publish/publish?source=official', 'creator.xiaohongshu.com', options.pageId);
+  const page = await deps.readSiteSnapshot(ctx.profile, pageInfo.id);
   return {
     site: 'xhs',
     command: 'status',
@@ -141,14 +144,14 @@ export const xhsAdapter: SiteAdapter = {
       name: 'draft',
       description: 'Create/fill a Xiaohongshu draft and stop before publishing',
       configure(command: Command): void {
-        command
+        addSitePageIdOption(command
           .option('--title <text>', 'note title')
           .option('--body <text>', 'note body')
           .option('--body-file <path>', 'note body file')
           .option('--image <path...>', 'image/video paths to upload')
           .option('--topic <name...>', 'topics to add')
           .option('--url <url>', 'creator URL')
-          .option('--screenshot <path>', 'save draft screenshot')
+          .option('--screenshot <path>', 'save draft screenshot'))
           .action(async function () {
             await runSiteCommand(this, ctx => runDraft(ctx, this.opts<XhsDraftOptions>()));
           });
@@ -158,8 +161,8 @@ export const xhsAdapter: SiteAdapter = {
       name: 'status',
       description: 'Observe current Xiaohongshu creator page',
       configure(command: Command): void {
-        command.action(async function () {
-          await runSiteCommand(this, runStatus);
+        addSitePageIdOption(command).action(async function () {
+          await runSiteCommand(this, ctx => runStatus(ctx, this.opts<{ pageId?: string }>()));
         });
       },
     },

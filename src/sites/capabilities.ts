@@ -40,7 +40,13 @@ export type { NetworkBody, NetworkEntry, PageInfo, RequestReplayResult } from '.
 export type { SiteAdapter, SiteCommandContext, SiteCommandSpec, SiteReceipt, SiteStepReceipt } from './types.js';
 export { runSiteCommand } from './runner.js';
 
-export async function ensureSitePage(profile: string, url: string, expectedUrlPart?: string): Promise<PageInfo> {
+export async function ensureSitePage(profile: string, url: string, expectedUrlPart?: string, pageIdValue?: string): Promise<PageInfo> {
+  const requestedPageId = parseSitePageId(pageIdValue);
+  if (requestedPageId) {
+    const page = await navigateSitePage(profile, url, requestedPageId);
+    setCurrentLeasedPageId(page.id);
+    return page;
+  }
   const pages = await listSitePages(profile).catch(() => []);
   const leasedPageId = currentLeasedPageId();
   if (leasedPageId) {
@@ -94,21 +100,21 @@ export async function typeIntoSiteTarget(profile: string, options: BrowserTypeOp
   return daemonBrowserType(profile, { timeoutMs: 20_000, ...options });
 }
 
-export async function uploadSiteFiles(profile: string, selector: string, files: string[], timeoutMs = 20_000): Promise<unknown> {
-  return daemonBrowserUpload(profile, { selector, files, timeoutMs });
+export async function uploadSiteFiles(profile: string, selector: string, files: string[], timeoutMs = 20_000, pageId?: number): Promise<unknown> {
+  return daemonBrowserUpload(profile, { pageId, selector, files, timeoutMs });
 }
 
-export async function uploadSiteTarget(profile: string, options: { selector: string; files: string[]; timeoutMs?: number; nth?: number }): Promise<unknown> {
+export async function uploadSiteTarget(profile: string, options: { pageId?: number; selector: string; files: string[]; timeoutMs?: number; nth?: number }): Promise<unknown> {
   return daemonBrowserUpload(profile, options);
 }
 
-export async function readSiteText(profile: string, max = 6000): Promise<string> {
-  const result = await evaluateSiteExpression(profile, `document.body.innerText.slice(0, ${JSON.stringify(max)})`);
+export async function readSiteText(profile: string, max = 6000, pageId?: number): Promise<string> {
+  const result = await evaluateSiteExpression(profile, `document.body.innerText.slice(0, ${JSON.stringify(max)})`, pageId);
   return typeof result.value === 'string' ? result.value : '';
 }
 
-export async function readSiteSnapshot(profile: string): Promise<{ url: string; title: string; text: string }> {
-  const result = await evaluateSiteExpression(profile, `({ url: location.href, title: document.title, text: document.body.innerText.slice(0, 8000) })`);
+export async function readSiteSnapshot(profile: string, pageId?: number): Promise<{ url: string; title: string; text: string }> {
+  const result = await evaluateSiteExpression(profile, `({ url: location.href, title: document.title, text: document.body.innerText.slice(0, 8000) })`, pageId);
   const value = result.value as { url?: unknown; title?: unknown; text?: unknown };
   return {
     url: typeof value.url === 'string' ? value.url : '',
@@ -117,9 +123,9 @@ export async function readSiteSnapshot(profile: string): Promise<{ url: string; 
   };
 }
 
-export async function captureSiteScreenshot(profile: string, out?: string): Promise<string | undefined> {
+export async function captureSiteScreenshot(profile: string, out?: string, pageId?: number): Promise<string | undefined> {
   if (!out) return undefined;
-  const result = await daemonBrowserScreenshot(profile, false);
+  const result = await daemonBrowserScreenshot(profile, false, pageId);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, Buffer.from(result.base64, 'base64'));
   return out;
@@ -132,11 +138,11 @@ export async function readRecentSiteErrors(profile: string, limit = 20): Promise
     .map(entry => ({ id: entry.id, type: entry.type, text: entry.text, ts: entry.ts }));
 }
 
-export async function detectSiteCaptcha(profile: string): Promise<{ present: boolean; frames: unknown[] }> {
+export async function detectSiteCaptcha(profile: string, pageId?: number): Promise<{ present: boolean; frames: unknown[] }> {
   const result = await evaluateSiteExpression(profile, `Array.from(document.querySelectorAll('iframe')).map((f, i) => {
     const r = f.getBoundingClientRect();
     return { i, title: f.title, src: f.src, rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-  }).filter(f => String(f.title || '').toLowerCase().includes('captcha') || String(f.src || '').toLowerCase().includes('captcha') || String(f.src || '').toLowerCase().includes('turnstile'))`);
+  }).filter(f => String(f.title || '').toLowerCase().includes('captcha') || String(f.src || '').toLowerCase().includes('captcha') || String(f.src || '').toLowerCase().includes('turnstile'))`, pageId);
   const frames = Array.isArray(result.value) ? result.value : [];
   return { present: frames.length > 0, frames };
 }
@@ -188,10 +194,10 @@ export async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export async function waitForText(profile: string, needle: string, timeoutMs: number): Promise<boolean> {
+export async function waitForText(profile: string, needle: string, timeoutMs: number, pageId?: number): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if ((await readSiteText(profile, 10_000)).includes(needle)) return true;
+    if ((await readSiteText(profile, 10_000, pageId)).includes(needle)) return true;
     await sleep(2000);
   }
   return false;

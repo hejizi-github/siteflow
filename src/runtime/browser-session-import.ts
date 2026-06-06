@@ -2,10 +2,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fsp from 'node:fs/promises';
+import * as crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 import { SiteflowError } from '../shared/errors.js';
 import type { BrowserSessionImportReceipt, BrowserStorageRecord, CookieRecord } from '../shared/types.js';
-
 export type BrowserSourceKind = 'chrome' | 'chromium' | 'edge' | 'brave' | 'arc';
 
 export interface BrowserSessionSource {
@@ -257,6 +258,178 @@ export function discoverLocalStorageOrigins(profileDir: string, domain?: string)
   return [...origins].sort();
 }
 
+// ─── Chromium Cookie Decryption (gstack-style) ──────────────────
+
+const KEYCHAIN_SERVICE_MAP: Record<BrowserSourceKind, string> = {
+  chrome: 'Chrome Safe Storage',
+  chromium: 'Chromium Safe Storage',
+  edge: 'Microsoft Edge Safe Storage',
+  brave: 'Brave Safe Storage',
+  arc: 'Arc Safe Storage',
+};
+
+function getKeychainService(browser: BrowserSourceKind): string {
+  return KEYCHAIN_SERVICE_MAP[browser];
+}
+
+async function getMacKeychainPassword(service: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('security', ['find-generic-password', '-s', service, '-w'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', data => { stdout += data; });
+    proc.stderr.on('data', data => { stderr += data; });
+    const timeout = setTimeout(() => {
+      proc.kill();
+      reject(new SiteflowError('KEYCHAIN_TIMEOUT', `macOS is waiting for Keychain permission for "${service}"`));
+    }, 10_000);
+    proc.on('close', code => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        const err = stderr.trim().toLowerCase();
+        if (err.includes('user canceled') || err.includes('denied') || err.includes('interaction not allowed')) {
+          reject(new SiteflowError('KEYCHAIN_DENIED', `Keychain access denied for "${service}"`));
+        } else if (err.includes('could not be found') || err.includes('not found')) {
+          reject(new SiteflowError('KEYCHAIN_NOT_FOUND', `No Keychain entry for "${service}"`));
+        } else {
+          reject(new SiteflowError('KEYCHAIN_ERROR', stderr.trim()));
+        }
+      }
+    });
+  });
+}
+
+function deriveAesKey(password: string, iterations: number): Buffer {
+  return crypto.pbkdf2Sync(password, 'saltysalt', iterations, 16, 'sha1');
+}
+
+function decryptV10Cookie(encryptedValue: Buffer, key: Buffer): string {
+  const ciphertext = encryptedValue.slice(3);
+  const iv = Buffer.alloc(16, 0x20);
+  const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+  let decrypted = decipher.update(ciphertext);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  const payload = decrypted.slice(32);
+  const padLength = payload[payload.length - 1];
+  if (padLength > 0 && padLength <= 16) {
+    return payload.slice(0, -padLength).toString('utf-8');
+  }
+  return payload.toString('utf-8');
+}
+function chromiumEpochToUnixSeconds(epoch: number): number {
+  if (epoch === 0) return -1;
+  const unixSeconds = Math.floor((epoch - 11644473600000000) / 1000000);
+  return unixSeconds > 0 ? unixSeconds : -1;
+}
+
+function sameSiteFromChromium(value: number): CookieRecord['sameSite'] {
+  if (value === 0) return 'None';
+  if (value === 1) return 'Lax';
+  if (value === 2) return 'Strict';
+  return 'Lax';
+}
+
+async function readCookiesFromSQLite(
+  dbPath: string,
+  aesKey: Buffer,
+  domain?: string,
+): Promise<{ cookies: CookieRecord[]; failed: number }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('sqlite3', [
+      dbPath,
+      '-json',
+      `SELECT host_key, name, value, hex(encrypted_value) as encrypted_value_hex, path, expires_utc,
+              is_secure, is_httponly, samesite
+       FROM cookies
+       WHERE (has_expires = 0 OR expires_utc > ${Date.now() * 1000 + 11644473600000000})
+       ORDER BY host_key, name`,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', data => { stdout += data; });
+    proc.stderr.on('data', data => { stderr += data; });
+
+    proc.on('close', code => {
+      if (code !== 0) {
+        reject(new SiteflowError('COOKIE_DB_READ_FAILED', stderr.trim()));
+        return;
+      }
+      try {
+        interface SQLiteCookieRow {
+          host_key: string;
+          name: string;
+          value: string;
+          encrypted_value_hex: string;
+          path: string;
+          expires_utc: number;
+          is_secure: number;
+          is_httponly: number;
+          samesite: number;
+        }
+        const rows: SQLiteCookieRow[] = stdout.trim() ? JSON.parse(stdout) : [];
+        const cookies: CookieRecord[] = [];
+        let failed = 0;
+        for (const row of rows) {
+          try {
+            let value: string;
+            if (row.encrypted_value_hex && row.encrypted_value_hex.length > 0) {
+              const enc = Buffer.from(row.encrypted_value_hex, 'hex');
+              const prefix = enc.toString('utf-8', 0, 3);
+              if (prefix === 'v10' || prefix === 'v11') {
+                value = decryptV10Cookie(enc, aesKey);
+              } else {
+                value = row.value || '';
+              }
+            } else {
+              value = row.value || '';
+            }
+            cookies.push({
+              name: row.name,
+              value,
+              domain: row.host_key,
+              path: row.path,
+              expires: chromiumEpochToUnixSeconds(row.expires_utc),
+              httpOnly: Boolean(row.is_httponly),
+              secure: Boolean(row.is_secure),
+              sameSite: sameSiteFromChromium(row.samesite),
+            });
+          } catch {
+            failed++;
+          }
+        }
+        resolve({ cookies: filterCookieRecords(cookies, domain), failed });
+      } catch (e) {
+        reject(new SiteflowError('COOKIE_PARSE_FAILED', e instanceof Error ? e.message : String(e)));
+      }
+    });
+  });
+}
+
+export async function extractCookiesDirectly(
+  source: BrowserSessionSource,
+  domain?: string,
+): Promise<{ cookies: CookieRecord[]; failedDecrypt: number }> {
+  if (process.platform !== 'darwin') {
+    throw new SiteflowError('UNSUPPORTED_PLATFORM', 'Direct cookie extraction is only supported on macOS');
+  }
+  const service = getKeychainService(source.browser);
+  const password = await getMacKeychainPassword(service);
+  const aesKey = deriveAesKey(password, 1003);
+
+  const dbPath = path.join(source.profileDir, 'Cookies');
+  if (!fs.existsSync(dbPath)) {
+    throw new SiteflowError('COOKIE_DB_NOT_FOUND', `No cookie database at ${dbPath}`);
+  }
+
+  const { cookies, failed } = await readCookiesFromSQLite(dbPath, aesKey, domain);
+  return { cookies, failedDecrypt: failed };
+}
+
 export interface ExtractBrowserSessionOptions {
   source: BrowserSessionSource;
   domain?: string;
@@ -274,27 +447,49 @@ export async function extractBrowserSession(options: ExtractBrowserSessionOption
   const tempRoot = await createPrivateTempDir();
   let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
   try {
+    let cookieRecords: CookieRecord[] = [];
+    let failedDecrypt = 0;
+
+    // On macOS, try gstack-style direct SQLite decryption first
+    // (avoids Chrome SingletonLock when Chrome is running)
+    if (process.platform === 'darwin') {
+      try {
+        const direct = await extractCookiesDirectly(options.source, options.domain);
+        cookieRecords = direct.cookies;
+        failedDecrypt = direct.failedDecrypt;
+      } catch {
+        // Fall through to Playwright snapshot approach
+      }
+    }
+
+    // If direct extraction didn't work, use Playwright snapshot
     const snapshotUserDataDir = await copyUserDataSnapshot(options.source, tempRoot);
     const snapshotProfileDir = path.join(snapshotUserDataDir, options.source.profile);
-    context = await chromium.launchPersistentContext(snapshotUserDataDir, {
-      channel: process.env.SITEFLOW_BROWSER_CHANNEL || 'chrome',
-      headless: true,
-      args: ['--hide-crash-restore-bubble'],
-    });
-    const cookieRecords = filterCookieRecords((await context.cookies()).map(cookie => ({
-      name: cookie.name,
-      value: cookie.value,
-      domain: cookie.domain,
-      path: cookie.path,
-      expires: cookie.expires,
-      httpOnly: cookie.httpOnly,
-      secure: cookie.secure,
-      sameSite: cookie.sameSite as CookieRecord['sameSite'],
-    })), options.domain);
+
+    if (cookieRecords.length === 0 || !options.cookiesOnly) {
+      context = await chromium.launchPersistentContext(snapshotUserDataDir, {
+        channel: process.env.SITEFLOW_BROWSER_CHANNEL || browserChannel(options.source.browser),
+        headless: true,
+        args: ['--profile-directory=' + options.source.profile, '--hide-crash-restore-bubble'],
+      });
+    }
+
+    if (cookieRecords.length === 0 && context) {
+      cookieRecords = filterCookieRecords((await context.cookies()).map(cookie => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        expires: cookie.expires,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite as CookieRecord['sameSite'],
+      })), options.domain);
+    }
 
     const storage: BrowserStorageRecord[] = [];
     const failedOrigins: Array<{ origin: string; code: string; message: string }> = [];
-    if (!options.cookiesOnly) {
+    if (!options.cookiesOnly && context) {
       const origins = discoverLocalStorageOrigins(snapshotProfileDir, options.domain);
       for (const origin of origins) {
         const page = await context.newPage();
@@ -309,12 +504,23 @@ export async function extractBrowserSession(options: ExtractBrowserSessionOption
         }
       }
     }
-    return { cookies: cookieRecords, storage, failedDecrypt: 0, failedOrigins };
+    return { cookies: cookieRecords, storage, failedDecrypt, failedOrigins };
   } catch (error) {
     throw new SiteflowError('SOURCE_LOCKED', error instanceof Error ? error.message : String(error));
   } finally {
     if (context) await context.close().catch(() => {});
     await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function browserChannel(browser: BrowserSourceKind): string | undefined {
+  switch (browser) {
+    case 'chrome': return 'chrome';
+    case 'edge': return 'msedge';
+    case 'chromium':
+    case 'brave':
+    case 'arc': return undefined;
+    default: return undefined;
   }
 }
 
