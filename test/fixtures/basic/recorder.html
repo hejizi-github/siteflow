@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Recorder Fixture</title>
+</head>
+<body>
+  <main>
+    <h1>Recorder Fixture</h1>
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text">
+
+    <label for="mode">Mode</label>
+    <select id="mode" name="mode">
+      <option>Basic</option>
+      <option>Advanced</option>
+    </select>
+
+    <button id="continue" type="button">Continue</button>
+    <p id="status">Idle</p>
+  </main>
+
+  <script>
+    const nameInput = document.querySelector('#name');
+    const modeSelect = document.querySelector('#mode');
+    const continueButton = document.querySelector('#continue');
+    const status = document.querySelector('#status');
+
+    continueButton.addEventListener('click', () => {
+      status.textContent = `Continued ${nameInput.value} in ${modeSelect.value}`;
+    });
+  </script>
+</body>
+</html>
