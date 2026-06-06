@@ -413,6 +413,19 @@ async function route(
   if (method === 'POST' && url.pathname === '/runtime/storage/import') {
     const body = await readJson(req) as { records?: BrowserStorageRecord[] };
     if (!Array.isArray(body.records)) throw new SiteflowError('BAD_STORAGE_IMPORT', 'runtime storage import requires records[]');
+    for (let i = 0; i < body.records.length; i++) {
+      const record = body.records[i];
+      if (typeof record !== 'object' || record === null) {
+        throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} must be a non-null object`);
+      }
+      if (typeof (record as unknown as Record<string, unknown>).origin !== 'string' || (record as unknown as Record<string, unknown>).origin === '') {
+        throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} must have a non-empty origin string`);
+      }
+      const ls = (record as unknown as Record<string, unknown>).localStorage;
+      if (ls !== undefined && (typeof ls !== 'object' || ls === null)) {
+        throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} localStorage must be an object when present`);
+      }
+    }
     const result = await runtime.importStorage(body.records);
     return { status: 200, body: { ok: true, data: result } };
   }
