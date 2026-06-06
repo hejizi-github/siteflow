@@ -180,6 +180,7 @@ export interface ReplayStepReceipt {
 
 export interface ReplayRunOptions {
   envFile?: string;
+  pageId?: number;
   dryRun?: boolean;
   stopBeforeMutating?: boolean;
   requireMutatingConfirmation?: boolean;

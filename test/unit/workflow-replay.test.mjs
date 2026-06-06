@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { Readable } from 'node:stream';
 
 import { BrowserRuntime } from '../../dist/runtime/browser-runtime.js';
 
@@ -509,6 +510,114 @@ test('BrowserRuntime replay opens startUrl before a non-open first step', async 
     ['open', 'https://example.test/start'],
     ['click', 'button'],
   ]);
+});
+
+test('BrowserRuntime replay routes leased pageId through startUrl bootstrap and actions', async () => {
+  const runtime = new BrowserRuntime('unit-start-url-page-id');
+  const calls = [];
+  runtime.open = async () => {
+    throw new Error('open should not create a new page when pageId is supplied');
+  };
+  runtime.navigate = async (url, pageId) => {
+    calls.push(['navigate', url, pageId]);
+    return { id: pageId, url, title: '', selected: true };
+  };
+  runtime.click = async options => {
+    calls.push(['click', options.selector, options.pageId]);
+    return { action: 'click', page: { id: options.pageId, url: 'https://example.test/start', title: '', selected: true }, target: 'selector:button', url: 'https://example.test/start' };
+  };
+
+  const result = await runtime.runReplayWorkflow(workflowWithFirstStep({
+    id: 'click-submit',
+    type: 'click',
+    target: {
+      structural: { selector: 'button' },
+      confidence: 'high',
+    },
+  }), { pageId: 7 });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    ['navigate', 'https://example.test/start', 7],
+    ['click', 'button', 7],
+  ]);
+});
+
+test('BrowserRuntime replay uses leased pageId for scroll and conditional wait', async () => {
+  const runtime = new BrowserRuntime('unit-wait-scroll-page-id');
+  const calls = [];
+  const page = {
+    async evaluate(_fn, args) {
+      if ('x' in args) calls.push(['scroll', args.x, args.y]);
+      if ('text' in args) calls.push(['wait', args.text]);
+      return true;
+    },
+  };
+  runtime.open = async () => {
+    throw new Error('open should not create a new page when pageId is supplied');
+  };
+  runtime.navigate = async (url, pageId) => {
+    calls.push(['navigate', url, pageId]);
+    return { id: pageId, url, title: '', selected: true };
+  };
+  runtime.getPage = pageId => {
+    calls.push(['getPage', pageId]);
+    return { pageId, page };
+  };
+
+  const result = await runtime.runReplayWorkflow({
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-06T00:00:00.000Z',
+    startUrl: 'https://example.test/start',
+    variables: [],
+    steps: [
+      { id: 'scroll-down', type: 'scroll', deltaX: 0, deltaY: 120 },
+      { id: 'wait-ready', type: 'wait', ms: 10, text: 'Ready' },
+    ],
+  }, { pageId: 7 });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [
+    ['navigate', 'https://example.test/start', 7],
+    ['getPage', 7],
+    ['scroll', 0, 120],
+    ['getPage', 7],
+    ['wait', 'Ready'],
+  ]);
+});
+
+test('replay route merges leased pageId into replay options', async () => {
+  const { route } = await import('../../dist/daemon/server.js');
+  const workflow = workflowWithFirstStep({
+    id: 'wait-ready',
+    type: 'wait',
+    ms: 1,
+  });
+  let receivedWorkflow;
+  let receivedOptions;
+  const runtime = {
+    async runReplayWorkflow(workflowArg, optionsArg) {
+      receivedWorkflow = workflowArg;
+      receivedOptions = optionsArg;
+      return { ok: true, workflow: { version: 1, steps: 1, startUrl: workflow.startUrl }, steps: [] };
+    },
+  };
+  const req = Readable.from([JSON.stringify({ workflow, options: { dryRun: true }, pageId: '7' })]);
+  req.method = 'POST';
+  req.url = '/replay/run';
+
+  const response = await route(req, runtime, () => ({
+    pid: 1,
+    port: 1,
+    profile: 'unit-replay-route',
+    startedAt: '2026-06-06T00:00:00.000Z',
+  }), () => {});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.deepEqual(receivedWorkflow, workflow);
+  assert.deepEqual(receivedOptions, { dryRun: true, pageId: 7 });
 });
 
 test('replay export-cli runs offline and emits startUrl bootstrap without daemon', () => {

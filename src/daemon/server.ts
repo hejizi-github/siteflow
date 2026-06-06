@@ -58,7 +58,7 @@ function parsePageId(value: unknown): number | undefined {
   return parsed;
 }
 
-async function route(
+export async function route(
   req: http.IncomingMessage,
   runtime: BrowserRuntime,
   info: () => DaemonInfo,
@@ -174,9 +174,13 @@ async function route(
   }
 
   if (method === 'POST' && url.pathname === '/replay/run') {
-    const body = await readJson(req) as { workflow?: unknown; options?: ReplayRunOptions };
-    const result = await runtime.runReplayWorkflow(body.workflow, body.options ?? {});
-    appendTraceEvent(info().profile, 'replay.run', { ok: result.ok, steps: result.steps.length, dryRun: body.options?.dryRun === true });
+    const body = await readJson(req) as { workflow?: unknown; options?: ReplayRunOptions; pageId?: unknown };
+    const replayOptions: ReplayRunOptions = {
+      ...(body.options ?? {}),
+      pageId: parsePageId(body.pageId ?? (body.options as { pageId?: unknown } | undefined)?.pageId),
+    };
+    const result = await runtime.runReplayWorkflow(body.workflow, replayOptions);
+    appendTraceEvent(info().profile, 'replay.run', { ok: result.ok, steps: result.steps.length, dryRun: replayOptions.dryRun === true, pageId: replayOptions.pageId });
     return { status: 200, body: { ok: true, data: result } };
   }
 

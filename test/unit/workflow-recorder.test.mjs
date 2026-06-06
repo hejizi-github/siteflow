@@ -1117,6 +1117,30 @@ test('startRecorderSession reuses page binding and routes events to active sessi
   }
 });
 
+test('BrowserRuntime startRecorder rejects when recorder is already active', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const runtime = new BrowserRuntime('unit-recorder-active');
+  let launched = false;
+  runtime.ensureLaunched = async () => {
+    launched = true;
+  };
+  runtime.recorderSession = {
+    id: 'session-active',
+    pageId: 1,
+    startedAt: '2026-06-06T00:00:00.000Z',
+    out: '/tmp/siteflow-active-recorder.json',
+    startUrl: 'https://example.test/start',
+    events: [],
+  };
+
+  await assert.rejects(
+    () => runtime.startRecorder({ out: '/tmp/siteflow-next-recorder.json' }),
+    error => error.code === 'RECORDER_ALREADY_RUNNING' && /already running/i.test(error.message),
+  );
+  assert.equal(launched, false);
+  assert.equal(runtime.recorderSession.out, '/tmp/siteflow-active-recorder.json');
+});
+
 test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
   const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-session-isolation-'));

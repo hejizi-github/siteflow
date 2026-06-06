@@ -433,6 +433,10 @@ export class BrowserRuntime {
   }
 
   async startRecorder(options: RecorderStartOptions): Promise<RecorderStatus> {
+    if (this.recorderSession) {
+      throw new SiteflowError('RECORDER_ALREADY_RUNNING', 'A recorder session is already running. Stop it before starting another recorder.');
+    }
+
     await this.ensureLaunched();
     let resolved: { pageId: number; page: Page };
     if (options.pageId !== undefined) {
@@ -465,21 +469,29 @@ export class BrowserRuntime {
 
   async runReplayWorkflow(workflowValue: unknown, options: ReplayRunOptions): Promise<ReplayRunResult> {
     const workflow = validateWorkflow(workflowValue);
+    let replayPageId = options.pageId;
+    const openReplayPage = async (url: string): Promise<PageInfo> => {
+      const page = replayPageId === undefined
+        ? await this.open(url)
+        : await this.navigate(url, replayPageId);
+      replayPageId = page.id;
+      return page;
+    };
     const driver: ReplayDriver = {
-      open: (url: string) => this.open(url),
-      click: (clickOptions: BrowserClickOptions) => this.click(clickOptions),
-      type: (typeOptions: BrowserTypeOptions) => this.type(typeOptions),
-      select: (selectOptions: BrowserSelectOptions) => this.select(selectOptions),
-      screenshot: (fullPage: boolean) => this.screenshot(fullPage),
+      open: openReplayPage,
+      click: (clickOptions: BrowserClickOptions) => this.click({ ...clickOptions, pageId: replayPageId }),
+      type: (typeOptions: BrowserTypeOptions) => this.type({ ...typeOptions, pageId: replayPageId }),
+      select: (selectOptions: BrowserSelectOptions) => this.select({ ...selectOptions, pageId: replayPageId }),
+      screenshot: (fullPage: boolean) => this.screenshot(fullPage, replayPageId),
       scroll: async (deltaX: number, deltaY: number) => {
-        const { page } = this.getSelectedPage();
+        const { page } = this.getPage(replayPageId);
         await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x: deltaX, y: deltaY });
       },
-      waitFor: (condition) => this.waitForReplayCondition(condition),
+      waitFor: (condition) => this.waitForReplayCondition(condition, replayPageId),
     };
     const firstStep = workflow.steps[0];
     if (options.dryRun !== true && (firstStep === undefined || firstStep.type !== 'open' || firstStep.url !== workflow.startUrl)) {
-      await this.open(workflow.startUrl);
+      await openReplayPage(workflow.startUrl);
     }
     return runWorkflow(driver, workflow, options);
   }
@@ -696,11 +708,11 @@ export class BrowserRuntime {
   }
 
 
-  private async waitForReplayCondition(condition: { ms: number; selector?: string; text?: string; urlContains?: string }): Promise<void> {
+  private async waitForReplayCondition(condition: { ms: number; selector?: string; text?: string; urlContains?: string }, pageId?: number): Promise<void> {
     const deadline = Date.now() + condition.ms;
     for (;;) {
       try {
-        const { page } = this.getSelectedPage();
+        const { page } = this.getPage(pageId);
         const matched = await page.evaluate(({ selector, text, urlContains }) => {
           const selectorMatched = selector === undefined || document.querySelector(selector) !== null;
           const textMatched = text === undefined || document.body?.innerText.includes(text) === true;
