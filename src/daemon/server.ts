@@ -1,5 +1,6 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { BrowserRuntime } from '../runtime/browser-runtime.js';
@@ -8,6 +9,7 @@ import { profileDir } from '../shared/paths.js';
 import type { BrowserStorageRecord, CookieRecord, DaemonInfo, SavedState } from '../shared/types.js';
 import { clearDaemonInfo, writeDaemonInfo } from './state.js';
 import { appendTraceEvent } from '../traces/artifact-store.js';
+@ours,@theirs
 
 interface ServerOptions {
   profile: string;
@@ -56,7 +58,7 @@ function parsePageId(value: unknown): number | undefined {
   return parsed;
 }
 
-async function route(
+export async function route(
   req: http.IncomingMessage,
   runtime: BrowserRuntime,
   info: () => DaemonInfo,
@@ -150,6 +152,64 @@ async function route(
       appendTraceEvent(info().profile, 'request.replay', { id, url: replay.url, status: replay.status });
       return { status: 200, body: { ok: true, data: replay } };
     }
+  }
+
+  if (method === 'POST' && url.pathname === '/recorder/start') {
+    const body = await readJson(req) as RecorderStartOptions;
+    if (!body.out || typeof body.out !== 'string') throw new SiteflowError('MISSING_OUT', 'recorder start requires out');
+    const pageId = parsePageId((body as { pageId?: unknown }).pageId);
+    const status = await runtime.startRecorder({ ...body, out: body.out, pageId });
+    appendTraceEvent(info().profile, 'recorder.start', { out: body.out, url: body.url, pageId: status.pageId });
+    return { status: 200, body: { ok: true, data: status } };
+  }
+
+  if (method === 'GET' && url.pathname === '/recorder/status') {
+    return { status: 200, body: { ok: true, data: runtime.recorderStatus() } };
+  }
+
+  if (method === 'POST' && url.pathname === '/recorder/stop') {
+    const result = await runtime.stopRecorder();
+    appendTraceEvent(info().profile, 'recorder.stop', { out: result.out, steps: result.steps, unsupportedEvents: result.unsupportedEvents });
+    return { status: 200, body: { ok: true, data: result } };
+  }
+
+  if (method === 'POST' && url.pathname === '/replay/run-file') {
+    const body = await readJson(req) as { path?: unknown; options?: ReplayRunOptions; pageId?: unknown };
+    if (!body.path || typeof body.path !== 'string') {
+      throw new SiteflowError('MISSING_WORKFLOW_PATH', 'replay run-file requires path');
+    }
+    let workflow: unknown;
+    try {
+      workflow = JSON.parse(await fsp.readFile(body.path, 'utf-8')) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new SiteflowError('BAD_WORKFLOW_JSON', 'Workflow file must be JSON');
+      }
+      throw error;
+    }
+    const replayOptions: ReplayRunOptions = {
+      ...(body.options ?? {}),
+      pageId: parsePageId(body.pageId ?? (body.options as { pageId?: unknown } | undefined)?.pageId),
+    };
+    const result = await runtime.runReplayWorkflow(workflow, replayOptions);
+    appendTraceEvent(info().profile, 'replay.run', { ok: result.ok, steps: result.steps.length, dryRun: replayOptions.dryRun === true, pageId: replayOptions.pageId, workflowPath: body.path });
+    return { status: 200, body: { ok: true, data: result } };
+  }
+
+  if (method === 'POST' && url.pathname === '/replay/run') {
+    const body = await readJson(req) as { workflow?: unknown; options?: ReplayRunOptions; pageId?: unknown };
+    const replayOptions: ReplayRunOptions = {
+      ...(body.options ?? {}),
+      pageId: parsePageId(body.pageId ?? (body.options as { pageId?: unknown } | undefined)?.pageId),
+    };
+    const result = await runtime.runReplayWorkflow(body.workflow, replayOptions);
+    appendTraceEvent(info().profile, 'replay.run', { ok: result.ok, steps: result.steps.length, dryRun: replayOptions.dryRun === true, pageId: replayOptions.pageId });
+    return { status: 200, body: { ok: true, data: result } };
+  }
+
+  if (method === 'POST' && url.pathname === '/replay/export-cli') {
+    const body = await readJson(req) as { workflow?: unknown };
+    return { status: 200, body: { ok: true, data: runtime.exportReplayCli(body.workflow) } };
   }
 
   if (method === 'POST' && url.pathname === '/browser/open') {

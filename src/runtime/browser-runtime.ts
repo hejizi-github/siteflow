@@ -1,4 +1,5 @@
 import * as fs from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { type Browser, type BrowserContext, type Page } from 'playwright';
 import { BrowserKernelContext } from './browser-kernel-context.js';
@@ -12,6 +13,17 @@ import { wireConsoleRecorder } from './console-recorder.js';
 import { MAX_CAPTURED_BODY_BYTES, captureBufferBody, redactHeaders, wireNetworkRecorder } from './network-recorder.js';
 import { createPageObservation, type DebuggerPausedEvent, type PageObservation, toBodySummary } from './page-observation.js';
 import { createSavedState, getRestorablePageUrls, readStorageSnapshot } from './storage-inspector.js';
+import { startRecorderSession, recorderStatus as sessionRecorderStatus, stopRecorderSession, type RecorderSession } from './recorder-runtime.js';
+import { runWorkflow, type ReplayDriver } from './replay-runtime.js';
+import { exportWorkflowCli as exportWorkflowCliScript } from './workflow-export.js';
+import { validateWorkflow } from './workflow-validation.js';
+import type {
+  RecorderStartOptions,
+  RecorderStatus,
+  RecorderStopResult,
+  ReplayRunOptions,
+  ReplayRunResult,
+} from './workflow-types.js';
 import type {
   AuthStatus,
   BrowserActionResult,
@@ -62,6 +74,7 @@ export class BrowserRuntime {
   private mode: 'none' | 'dedicated-profile' | 'cdp-attach' = 'none';
   private browserUrl: string | null = null;
   private launchPromise: Promise<void> | null = null;
+  private recorderSession: RecorderSession | null = null;
 
   constructor(private profile: string) {}
 
@@ -150,6 +163,7 @@ export class BrowserRuntime {
     await this.resetContext();
     return { detached: previousMode === 'cdp-attach', previousMode };
   }
+
 
   async listPages(): Promise<PageInfo[]> {
     await this.ensureLaunched();
@@ -421,6 +435,78 @@ export class BrowserRuntime {
     };
   }
 
+  async startRecorder(options: RecorderStartOptions): Promise<RecorderStatus> {
+    if (this.recorderStatus().recording) {
+      throw new SiteflowError('RECORDER_ALREADY_RUNNING', 'A recorder session is already running. Stop it before starting another recorder.');
+    }
+    this.recorderSession = null;
+
+    await this.ensureLaunched();
+    let resolved: { pageId: number; page: Page };
+    if (options.pageId !== undefined) {
+      resolved = this.getPage(options.pageId);
+    } else if (this.selectedPageId !== null) {
+      resolved = this.getSelectedPage();
+    } else if (options.url) {
+      const page = await this.context!.newPage();
+      const pageId = this.adoptPage(page);
+      this.selectedPageId = pageId;
+      resolved = { pageId, page };
+    } else {
+      resolved = this.getSelectedPage();
+    }
+    this.selectedPageId = resolved.pageId;
+    this.recorderSession = await startRecorderSession(resolved.page, resolved.pageId, options);
+    return sessionRecorderStatus(this.recorderSession);
+  }
+
+  recorderStatus(): RecorderStatus {
+    return sessionRecorderStatus(this.recorderSession);
+  }
+
+  async stopRecorder(): Promise<RecorderStopResult> {
+    const session = this.recorderSession;
+    if (!session) throw new SiteflowError('RECORDER_NOT_RUNNING', 'No recorder session is running.');
+    try {
+      return await stopRecorderSession(session);
+    } finally {
+      this.recorderSession = null;
+    }
+  }
+
+  async runReplayWorkflow(workflowValue: unknown, options: ReplayRunOptions): Promise<ReplayRunResult> {
+    const workflow = validateWorkflow(workflowValue);
+    let replayPageId = options.pageId;
+    const openReplayPage = async (url: string): Promise<PageInfo> => {
+      const page = replayPageId === undefined
+        ? await this.open(url)
+        : await this.navigate(url, replayPageId);
+      replayPageId = page.id;
+      return page;
+    };
+    const driver: ReplayDriver = {
+      open: openReplayPage,
+      click: (clickOptions: BrowserClickOptions) => this.click({ ...clickOptions, pageId: replayPageId }),
+      type: (typeOptions: BrowserTypeOptions) => this.type({ ...typeOptions, pageId: replayPageId }),
+      select: (selectOptions: BrowserSelectOptions) => this.select({ ...selectOptions, pageId: replayPageId }),
+      screenshot: (fullPage: boolean) => this.screenshot(fullPage, replayPageId),
+      scroll: async (deltaX: number, deltaY: number) => {
+        const { page } = this.getPage(replayPageId);
+        await page.evaluate(({ x, y }) => window.scrollBy(x, y), { x: deltaX, y: deltaY });
+      },
+      waitFor: (condition) => this.waitForReplayCondition(condition, replayPageId),
+    };
+    const firstStep = workflow.steps[0];
+    if (options.dryRun !== true && (firstStep === undefined || firstStep.type !== 'open' || firstStep.url !== workflow.startUrl)) {
+      await openReplayPage(workflow.startUrl);
+    }
+    return runWorkflow(driver, workflow, options);
+  }
+
+  exportReplayCli(workflowValue: unknown): { script: string } {
+    return { script: exportWorkflowCliScript(validateWorkflow(workflowValue)) };
+  }
+
   async installHook(name: HookInfo['name']): Promise<HookInfo> {
     const { pageId, page } = this.getSelectedPage();
     const observation = this.getObservation(pageId);
@@ -663,6 +749,37 @@ export class BrowserRuntime {
     return ensureDebuggerReady(page, observation);
   }
 
+
+  private async waitForReplayCondition(condition: { ms: number; selector?: string; text?: string; urlContains?: string }, pageId?: number): Promise<void> {
+    const deadline = Date.now() + condition.ms;
+    for (;;) {
+      try {
+        const { page } = this.getPage(pageId);
+        const matched = await page.evaluate(({ selector, text, urlContains }) => {
+          const selectorMatched = selector === undefined || document.querySelector(selector) !== null;
+          const textMatched = text === undefined || document.body?.innerText.includes(text) === true;
+          const urlMatched = urlContains === undefined || window.location.href.includes(urlContains);
+          return selectorMatched && textMatched && urlMatched;
+        }, condition);
+        if (matched) return;
+      } catch (error) {
+        if (!this.isNavigationEvaluationError(error)) throw error;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new SiteflowError('REPLAY_WAIT_TIMEOUT', 'Timed out waiting for workflow condition.');
+      }
+      await sleep(Math.min(50, remainingMs));
+    }
+  }
+
+  private isNavigationEvaluationError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes('Execution context was destroyed')
+      || message.includes('Cannot find context with specified id')
+      || message.includes('Most likely because of a navigation');
+  }
 
   private shouldSkipCurlHeader(name: string): boolean {
     return ['host', 'content-length', 'connection'].includes(name.toLowerCase());

@@ -1,0 +1,2845 @@
+import test from 'node:test';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import * as fs from 'node:fs';
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createContext, runInContext } from 'node:vm';
+
+const validation = () => import('../../dist/runtime/workflow-validation.js');
+class FakeInputElement {}
+class FakeTextAreaElement {}
+class FakeSelectElement {}
+
+function fakeRecordedElement(overrides = {}) {
+  return {
+    nodeType: 1,
+    localName: 'div',
+    tagName: 'DIV',
+    id: '',
+    labels: [],
+    isContentEditable: false,
+    innerText: '',
+    textContent: '',
+    getAttribute: () => undefined,
+    closest: () => undefined,
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 100, height: 30 }),
+    ...overrides,
+  };
+}
+
+async function recordFixturePayloads(element, type, eventOverrides = {}) {
+  const { scrollBeforeEvent, ...eventPayloadOverrides } = eventOverrides;
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const payloads = [];
+  const listeners = {};
+  const windowListeners = {};
+  let nextTimer = 1;
+  const activeTimers = new Set();
+  const window = {
+    __siteflowRecorderInstalled: false,
+    __siteflowRecordEvent: async (payload) => {
+      payloads.push(payload);
+    },
+    location: { href: 'https://example.test/form' },
+    scrollX: 0,
+    scrollY: 0,
+    addEventListener: (eventType, handler) => {
+      windowListeners[eventType] = handler;
+    },
+    setTimeout: () => {
+      const timer = nextTimer;
+      nextTimer += 1;
+      activeTimers.add(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => {
+      activeTimers.delete(timer);
+    },
+  };
+  const document = {
+    title: 'Form',
+    querySelectorAll: eventOverrides.querySelectorAll || (() => []),
+    getElementById: eventOverrides.getElementById || (() => null),
+    addEventListener: (eventType, handler) => {
+      listeners[eventType] = handler;
+    },
+  };
+  const context = createContext({
+    window,
+    document,
+    Node: { ELEMENT_NODE: 1 },
+    HTMLInputElement: FakeInputElement,
+    HTMLTextAreaElement: FakeTextAreaElement,
+    HTMLSelectElement: FakeSelectElement,
+  });
+
+  runInContext(recorderInjectionSource(), context);
+  if (scrollBeforeEvent) {
+    window.scrollX = scrollBeforeEvent.x ?? window.scrollX;
+    window.scrollY = scrollBeforeEvent.y ?? window.scrollY;
+    windowListeners.scroll();
+  }
+  listeners[type]({ type, target: element, ...eventPayloadOverrides });
+  return payloads;
+}
+
+async function recordFixtureEvent(element, type, eventOverrides = {}) {
+  const payloads = await recordFixturePayloads(element, type, eventOverrides);
+  assert.equal(payloads.length, 1);
+  return payloads[0];
+}
+
+
+function validWorkflow(overrides = {}) {
+  return {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [{ id: 'step-1', type: 'open', url: 'https://example.com/' }],
+    evidence: {},
+    ...overrides,
+  };
+}
+
+test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+  const workflow = validateWorkflow(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'click', target },
+      { id: 'step-3', type: 'type', target, value: 'hello' },
+      { id: 'step-4', type: 'select', target, option: 'A' },
+      { id: 'step-5', type: 'scroll', deltaX: 0, deltaY: 120 },
+      { id: 'step-6', type: 'wait' },
+      { id: 'step-7', type: 'screenshot' },
+    ],
+    evidence: { pages: 1, events: 2 },
+  }));
+
+  assert.equal(workflow.kind, 'siteflow.workflow');
+  assert.deepEqual(workflow.steps.map((step) => step.type), ['open', 'click', 'type', 'select', 'scroll', 'wait', 'screenshot']);
+});
+
+test('selectPageOption uses native selectOption with value fallback for select elements', async () => {
+  const { selectPageOption } = await import('../../dist/runtime/page-actions.js');
+  const calls = [];
+  let selectedValue = 'US';
+  const labelsByValue = { US: 'United States', CA: 'Canada' };
+  const nativeSelect = {
+    nth: () => nativeSelect,
+    async innerText() {
+      return labelsByValue[selectedValue];
+    },
+    async evaluate(callback) {
+      return callback({
+        tagName: 'SELECT',
+        value: selectedValue,
+        selectedOptions: [{
+          label: labelsByValue[selectedValue],
+          innerText: labelsByValue[selectedValue],
+          textContent: labelsByValue[selectedValue],
+          value: selectedValue,
+        }],
+      });
+    },
+    async selectOption(option) {
+      calls.push(option);
+      if (option.label) throw new Error('No option found for label');
+      selectedValue = option.value;
+    },
+  };
+  const page = {
+    locator(selector) {
+      assert.equal(selector, '#country');
+      return nativeSelect;
+    },
+    waitForTimeout: async () => {},
+  };
+
+  const target = await selectPageOption(page, {
+    selector: '#country',
+    option: 'CA',
+    timeoutMs: 50,
+  });
+
+  assert.deepEqual(target, { selector: '#country', exact: undefined });
+  assert.deepEqual(calls, [{ label: 'CA' }, { value: 'CA' }]);
+});
+
+test('validateWorkflow preserves optional workflow fields and defaults variables/evidence', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow({
+    version: 1,
+    kind: 'siteflow.workflow',
+    name: 'Checkout',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    steps: [{ id: 'step-1', type: 'open', url: 'https://example.com/' }],
+  });
+
+  assert.equal(workflow.name, 'Checkout');
+  assert.deepEqual(workflow.variables, []);
+  assert.deepEqual(workflow.steps, [{ id: 'step-1', type: 'open', url: 'https://example.com/' }]);
+  assert.deepEqual(workflow.evidence, {});
+});
+
+test('validateWorkflow rejects malformed top-level workflow fields', async () => {
+  const { validateWorkflow } = await validation();
+  for (const workflow of [
+    null,
+    [],
+    'workflow',
+    validWorkflow({ kind: 'siteflow.recording' }),
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.kind;
+      return workflow;
+    })(),
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.steps;
+      return workflow;
+    })(),
+    validWorkflow({ steps: {} }),
+    validWorkflow({ evidence: 'bad' }),
+  ]) {
+    assert.throws(
+      () => validateWorkflow(workflow),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow preserves variables, steps, and evidence when supplied', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow(validWorkflow({
+    name: 'Signup',
+    variables: [{ name: 'email', source: 'input', sensitive: false, required: true }],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      {
+        id: 'step-2',
+        type: 'click',
+        target: {
+          semantic: { role: 'button', aria: 'Submit', label: 'Submit', text: 'Submit', placeholder: 'Email' },
+          structural: { selector: '#submit', xpath: '//*[@id="submit"]', nth: 0 },
+          geometry: { x: 10, y: 20, width: 100, height: 30 },
+          confidence: 'medium',
+        },
+      },
+      { id: 'step-3', type: 'type', target: { confidence: 'low' }, value: 'hello' },
+    ],
+    evidence: { pages: 1, events: 2 },
+  }));
+
+  assert.equal(workflow.name, 'Signup');
+  assert.deepEqual(workflow.variables, [{ name: 'email', source: 'input', sensitive: false, required: true }]);
+  assert.deepEqual(workflow.steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.com/' },
+    {
+      id: 'step-2',
+      type: 'click',
+      target: {
+        semantic: { role: 'button', aria: 'Submit', label: 'Submit', text: 'Submit', placeholder: 'Email' },
+        structural: { selector: '#submit', xpath: '//*[@id="submit"]', nth: 0 },
+        geometry: { x: 10, y: 20, width: 100, height: 30 },
+        confidence: 'medium',
+      },
+    },
+    { id: 'step-3', type: 'type', target: { confidence: 'low' }, value: 'hello' },
+  ]);
+  assert.deepEqual(workflow.evidence, { pages: 1, events: 2 });
+});
+
+test('validateWorkflow classifies malformed and unsupported workflow versions', async () => {
+  const { validateWorkflow } = await validation();
+  for (const workflow of [
+    (() => {
+      const workflow = validWorkflow();
+      delete workflow.version;
+      return workflow;
+    })(),
+    validWorkflow({ version: '1' }),
+    validWorkflow({ version: Number.NaN }),
+  ]) {
+    assert.throws(
+      () => validateWorkflow(workflow),
+      /BAD_WORKFLOW/,
+    );
+  }
+
+  assert.throws(
+    () => validateWorkflow(validWorkflow({ version: 2 })),
+    /WORKFLOW_UNSUPPORTED_VERSION/,
+  );
+});
+
+test('validateWorkflow rejects unsupported phase 1 step types', async () => {
+  const { validateWorkflow } = await validation();
+  assert.throws(
+    () => validateWorkflow({
+      version: 1,
+      kind: 'siteflow.workflow',
+      createdAt: '2026-06-05T00:00:00.000Z',
+      startUrl: 'https://example.com/',
+      variables: [],
+      steps: [{ id: 'step-1', type: 'upload' }],
+      evidence: {},
+    }),
+    /UNSUPPORTED_WORKFLOW_STEP/,
+  );
+});
+
+test('validateWorkflow rejects present non-string workflow names', async () => {
+  const { validateWorkflow } = await validation();
+  assert.throws(
+    () => validateWorkflow(validWorkflow({ name: 123 })),
+    /BAD_WORKFLOW/,
+  );
+});
+
+test('validateWorkflow rejects malformed workflow variables', async () => {
+  const { validateWorkflow } = await validation();
+  assert.throws(
+    () => validateWorkflow(validWorkflow({ variables: [{}] })),
+    /BAD_WORKFLOW/,
+  );
+});
+
+test('validateWorkflow rejects malformed required step targets', async () => {
+  const { validateWorkflow } = await validation();
+  for (const step of [
+    { id: 'step-1', type: 'click' },
+    { id: 'step-1', type: 'click', target: {} },
+    { id: 'step-1', type: 'type', value: 'hello' },
+    { id: 'step-1', type: 'type', target: {}, value: 'hello' },
+    { id: 'step-1', type: 'select', option: 'A' },
+    { id: 'step-1', type: 'select', target: {}, option: 'A' },
+  ]) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects malformed nested target fields', async () => {
+  const { validateWorkflow } = await validation();
+  const targetCases = [
+    { confidence: 'bad' },
+    { confidence: 'high', semantic: 'button' },
+    { confidence: 'high', semantic: { role: 1 } },
+    { confidence: 'high', semantic: { aria: 1 } },
+    { confidence: 'high', semantic: { label: 1 } },
+    { confidence: 'high', semantic: { text: 1 } },
+    { confidence: 'high', semantic: { placeholder: 1 } },
+    { confidence: 'high', structural: 'selector' },
+    { confidence: 'high', structural: { selector: 1 } },
+    { confidence: 'high', structural: { xpath: 1 } },
+    { confidence: 'high', structural: { nth: Number.NaN } },
+    { confidence: 'high', geometry: 'box' },
+    { confidence: 'high', geometry: { x: 'bad', y: 0 } },
+    { confidence: 'high', geometry: { x: 0, y: Number.POSITIVE_INFINITY } },
+    { confidence: 'high', geometry: { x: 0, y: 0, width: '100' } },
+    { confidence: 'high', geometry: { x: 0, y: 0, height: Number.NaN } },
+  ];
+
+  for (const target of targetCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [{ id: 'step-1', type: 'click', target }] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects missing or invalid required step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const validTarget = { confidence: 'low' };
+  const stepCases = [
+    { id: 'step-1', type: 'open' },
+    { id: 'step-1', type: 'open', url: '' },
+    { id: 'step-1', type: 'open', url: 123 },
+    { id: 'step-1', type: 'type', target: validTarget },
+    { id: 'step-1', type: 'type', target: validTarget, value: '' },
+    { id: 'step-1', type: 'type', target: validTarget, value: 123 },
+    { id: 'step-1', type: 'select', target: validTarget },
+    { id: 'step-1', type: 'select', target: validTarget, option: '' },
+    { id: 'step-1', type: 'select', target: validTarget, option: 123 },
+  ];
+
+  for (const step of stepCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow accepts recorded Enter key type steps with empty value', async () => {
+  const { validateWorkflow } = await validation();
+  const step = {
+    id: 'step-1',
+    type: 'type',
+    target: { confidence: 'high' },
+    value: '',
+    clear: false,
+    pressEnter: true,
+  };
+
+  const workflow = validateWorkflow(validWorkflow({ steps: [step] }));
+
+  assert.deepEqual(workflow.steps, [step]);
+});
+
+test('validateWorkflow accepts cleared type steps with empty value', async () => {
+  const { validateWorkflow } = await validation();
+  const step = {
+    id: 'step-1',
+    type: 'type',
+    target: { confidence: 'high' },
+    value: '',
+    clear: true,
+  };
+
+  const workflow = validateWorkflow(validWorkflow({ steps: [step] }));
+
+  assert.deepEqual(workflow.steps, [step]);
+});
+
+test('validateWorkflow rejects empty type steps without clear or Enter intent', async () => {
+  const { validateWorkflow } = await validation();
+
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target: { confidence: 'high' }, value: '' }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
+test('validateWorkflow rejects empty Enter type steps unless clear is false', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target, value: '', pressEnter: true }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
+test('validateWorkflow rejects malformed scroll deltas', async () => {
+  const { validateWorkflow } = await validation();
+  const stepCases = [
+    { id: 'step-1', type: 'scroll', deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0 },
+    { id: 'step-1', type: 'scroll', deltaX: '0', deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0, deltaY: '120' },
+    { id: 'step-1', type: 'scroll', deltaX: Number.NaN, deltaY: 120 },
+    { id: 'step-1', type: 'scroll', deltaX: 0, deltaY: Number.POSITIVE_INFINITY },
+  ];
+
+  for (const step of stepCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow rejects malformed optional step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+  const stepCases = [
+    { id: 'step-1', type: 'click', target, button: 'primary' },
+    { id: 'step-1', type: 'type', target, value: 'hello', clear: 'true' },
+    { id: 'step-1', type: 'type', target, value: 'hello', pressEnter: 1 },
+    { id: 'step-1', type: 'wait', ms: '100' },
+    { id: 'step-1', type: 'wait', ms: Number.NaN },
+    { id: 'step-1', type: 'wait', ms: Number.POSITIVE_INFINITY },
+    { id: 'step-1', type: 'wait', urlContains: 1 },
+    { id: 'step-1', type: 'wait', text: 1 },
+    { id: 'step-1', type: 'wait', selector: 1 },
+    { id: 'step-1', type: 'screenshot', fullPage: 'true' },
+  ];
+
+  for (const step of stepCases) {
+    assert.throws(
+      () => validateWorkflow(validWorkflow({ steps: [step] })),
+      /BAD_WORKFLOW/,
+    );
+  }
+});
+
+test('validateWorkflow preserves valid optional step fields', async () => {
+  const { validateWorkflow } = await validation();
+  const target = { confidence: 'high' };
+  const steps = [
+    { id: 'step-1', type: 'click', target, button: 'middle' },
+    { id: 'step-2', type: 'type', target, value: 'hello', clear: true, pressEnter: false },
+    { id: 'step-3', type: 'wait', ms: 250, urlContains: '/done', text: 'Done', selector: '#done' },
+    { id: 'step-4', type: 'screenshot', fullPage: true },
+  ];
+
+  const workflow = validateWorkflow(validWorkflow({ steps }));
+
+  assert.deepEqual(workflow.steps, steps);
+});
+
+test('exportWorkflowCli preserves variables and labels mutating steps', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli({
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'type', label: 'Email', target: { semantic: { label: 'Email' }, confidence: 'high' }, value: '${LOGIN_EMAIL}' },
+      { id: 'step-3', type: 'click', label: 'Submit form', target: { semantic: { text: 'Submit' }, confidence: 'high' }, mutating: true },
+      { id: 'step-4', type: 'wait', ms: 1234 },
+    ],
+    evidence: {},
+  });
+
+  assert.match(script, /siteflow --json browser open 'https:\/\/example.com\/'/);
+  assert.match(script, /--value '\$\{LOGIN_EMAIL\}'/);
+  assert.match(script, /# step-2: type - Email/);
+  assert.match(script, /siteflow --json eval 'new Promise\(resolve => setTimeout\(resolve, 1234\)\)'/);
+  assert.match(script, /# MUTATING step-3: Submit form/);
+});
+
+test('exportWorkflowCli expands exact typed variables only when declared', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const target = { semantic: { label: 'Email' }, confidence: 'high' };
+
+  const undeclaredScript = exportWorkflowCli(validWorkflow({
+    variables: [],
+    steps: [{ id: 'step-1', type: 'type', target, value: '${LOGIN_EMAIL}' }],
+  }));
+  const declaredScript = exportWorkflowCli(validWorkflow({
+    variables: [{ name: 'LOGIN_EMAIL', source: 'input', sensitive: false, required: true }],
+    steps: [{ id: 'step-1', type: 'type', target, value: '${LOGIN_EMAIL}' }],
+  }));
+
+  assert.match(undeclaredScript, /--value '\$\{LOGIN_EMAIL\}'/);
+  assert.doesNotMatch(undeclaredScript, /--value "\$\{LOGIN_EMAIL\}"/);
+  assert.match(declaredScript, /--value "\$\{LOGIN_EMAIL\}"/);
+});
+
+test('exportWorkflowCli emits workflow startUrl before recorded steps without initial open', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://start.example/path?x=1',
+    steps: [{ id: 'step-1', type: 'wait', ms: 25 }],
+  }));
+
+  const openCommand = "siteflow --json browser open 'https://start.example/path?x=1'";
+  const waitCommand = "siteflow --json eval 'new Promise(resolve => setTimeout(resolve, 25))'";
+  assert.ok(script.includes(openCommand));
+  assert.ok(script.includes(waitCommand));
+  assert.ok(script.indexOf(openCommand) < script.indexOf(waitCommand));
+});
+
+test('exportWorkflowCli does not duplicate workflow startUrl when first step is open', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://example.com/',
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'wait', ms: 25 },
+    ],
+  }));
+
+  const openCommand = "siteflow --json browser open 'https://example.com/'";
+  assert.equal(script.split(openCommand).length - 1, 1);
+});
+
+test('exportWorkflowCli prepends workflow startUrl when first open goes elsewhere', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    startUrl: 'https://start.example/',
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://elsewhere.example/' },
+      { id: 'step-2', type: 'wait', ms: 25 },
+    ],
+  }));
+
+  const startOpenCommand = "siteflow --json browser open 'https://start.example/'";
+  const firstStepOpenCommand = "siteflow --json browser open 'https://elsewhere.example/'";
+  assert.ok(script.includes(startOpenCommand));
+  assert.ok(script.includes(firstStepOpenCommand));
+  assert.ok(script.indexOf(startOpenCommand) < script.indexOf(firstStepOpenCommand));
+});
+
+test('exportWorkflowCli sanitizes comment text for mutating steps', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      {
+        id: 'step-1\necho pwned',
+        type: 'click',
+        label: 'Submit\r\necho label-pwned\u0007',
+        target: { semantic: { text: 'Submit' }, confidence: 'high' },
+        mutating: true,
+      },
+    ],
+  }));
+
+  assert.match(script, /# MUTATING step-1 echo pwned: Submit  echo label-pwned /);
+  assert.doesNotMatch(script, /^echo (?:pwned|label-pwned)$/m);
+});
+
+test('exportWorkflowCli writes screenshots to a safe local filename', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [{ id: '../outside/path', type: 'screenshot' }],
+  }));
+
+  assert.match(script, /--out '\.\._outside_path\.png'/);
+  assert.doesNotMatch(script, /\.\.\//);
+});
+
+test('exportWorkflowCli rejects non-integer structural nth', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { selector: '#submit', nth: 1.5 }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects xpath targets instead of dropping xpath disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { selector: '#submit', xpath: '//*[@id="submit"]' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects nth when click falls back to geometry', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { structural: { nth: 1 }, geometry: { x: 12, y: 34 }, confidence: 'low' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects placeholder-only targets instead of selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'type',
+          target: { semantic: { placeholder: 'Search docs' }, confidence: 'high' },
+          value: 'workflow',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects role-only click targets instead of selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { semantic: { role: 'button' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects role+text targets instead of dropping role disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'click',
+          target: { semantic: { role: 'button', text: 'Submit' }, confidence: 'high' },
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects placeholder+selector targets instead of dropping placeholder disambiguators', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'type',
+          target: {
+            semantic: { placeholder: 'Search docs' },
+            structural: { selector: '#search' },
+            confidence: 'high',
+          },
+          value: 'workflow',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects aria-only select targets instead of aria-label selector fallbacks', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { semantic: { aria: 'Country' }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects label-only select targets', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { semantic: { label: 'Country' }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects select targets with nth even when selector is present', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [
+        {
+          id: 'step-1',
+          type: 'select',
+          target: { structural: { selector: '#country', nth: 1 }, confidence: 'high' },
+          option: 'Canada',
+        },
+      ],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli rejects geometry-only type and select targets', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const geometryOnlyTarget = { geometry: { x: 12, y: 34 }, confidence: 'low' };
+
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [{ id: 'step-1', type: 'type', target: geometryOnlyTarget, value: 'hello' }],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+  assert.throws(
+    () => exportWorkflowCli(validWorkflow({
+      steps: [{ id: 'step-1', type: 'select', target: geometryOnlyTarget, option: 'One' }],
+    })),
+    /UNSUPPORTED_WORKFLOW_TARGET/,
+  );
+});
+
+test('exportWorkflowCli preserves conditional wait semantics', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'wait', selector: '#ready', ms: 2000 },
+      { id: 'step-2', type: 'wait', text: 'Loaded' },
+      { id: 'step-3', type: 'wait', urlContains: '/done' },
+    ],
+  }));
+
+  assert.match(script, /document\.querySelector\("#ready"\) !== null/);
+  assert.match(script, /Date\.now\(\) \+ 2000/);
+  assert.match(script, /document\.body\?\.innerText\.includes\("Loaded"\) === true/);
+  assert.match(script, /Date\.now\(\) \+ 1000/);
+  assert.match(script, /window\.location\.href\.includes\("\/done"\)/);
+  assert.doesNotMatch(script, /setTimeout\(resolve, 1000\)/);
+});
+
+test('normalizeRecordedEvents merges repeated input events', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Search' },
+    structural: { selector: 'input[name="q"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/search',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'input', target, value: 'a', url: 'https://example.test/search', title: 'Search' },
+      { ts: '2026-06-05T00:00:02.000Z', type: 'input', target, value: 'apple', url: 'https://example.test/search', title: 'Search' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+    { id: 'step-2', type: 'type', target, value: 'apple', clear: true },
+  ]);
+});
+
+test('normalizeRecordedEvents keeps same-label inputs with different geometry separate', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const firstTarget = {
+    semantic: { label: 'Search' },
+    structural: {},
+    geometry: { x: 40, y: 20, width: 80, height: 30 },
+    confidence: 'high',
+  };
+  const secondTarget = {
+    semantic: { label: 'Search' },
+    structural: {},
+    geometry: { x: 160, y: 20, width: 80, height: 30 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/search',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'input', control: 'input', target: firstTarget, value: 'alpha', url: 'https://example.test/search', title: 'Search' },
+      { ts: '2026-06-05T00:00:02.000Z', type: 'input', control: 'input', target: secondTarget, value: 'beta', url: 'https://example.test/search', title: 'Search' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+    { id: 'step-2', type: 'type', target: firstTarget, value: 'alpha', clear: true },
+    { id: 'step-3', type: 'type', target: secondTarget, value: 'beta', clear: true },
+  ]);
+});
+
+test('normalizeRecordedEvents preserves input coalescing across unsupported Tab keydown', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-input-tab-coalesce-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Search' },
+      structural: { selector: 'input[name="q"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-input-tab-coalesce',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/search',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'input', control: 'input', target, value: 'appl', url: 'https://example.test/search', title: 'Search' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'keydown', control: 'input', key: 'Tab', target, url: 'https://example.test/search', title: 'Search' },
+        { ts: '2026-06-05T00:00:03.000Z', type: 'change', control: 'input', target, value: 'apple', url: 'https://example.test/search', title: 'Search' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/search' },
+      { id: 'step-2', type: 'type', target, value: 'apple', clear: true },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecordedEvents marks submit clicks as mutating', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { text: 'Submit' },
+    structural: { selector: 'button[type="submit"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target, mutating: true },
+  ]);
+});
+
+test('normalizeRecordedEvents preserves mutating hint for stable selector clicks without semantics', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: {},
+    structural: { selector: '#submit', nth: 0 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, mutating: true, url: 'https://example.test/form', title: 'Form' },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target, mutating: true },
+  ]);
+});
+
+test('input submit with stable selector records selector target without semantic submit text', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'submit',
+    value: 'save changes',
+    getAttribute: (name) => (name === 'type' ? 'submit' : undefined),
+  });
+  Object.setPrototypeOf(input, FakeInputElement.prototype);
+
+  const event = await recordFixtureEvent(input, 'click', {
+    querySelectorAll: (selector) => (selector === 'input[type="submit"]' ? [input] : []),
+  });
+
+  assert.equal(event.target.semantic.text, undefined);
+  assert.equal(event.target.structural.selector, 'input[type="submit"]');
+  assert.equal(event.target.structural.nth, undefined);
+  assert.equal(event.mutating, true);
+  assert.deepEqual(normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  }), [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target: event.target, mutating: true },
+  ]);
+});
+
+test('normalizeRecordedEvents converts select change events to select steps', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target, option: 'Canada' },
+  ]);
+});
+
+test('recorded selector target includes matching nth and normalizes preserving nth', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const first = fakeRecordedElement({
+    localName: 'button',
+    tagName: 'BUTTON',
+    getAttribute: (name) => (name === 'type' ? 'button' : undefined),
+  });
+  const second = fakeRecordedElement({
+    localName: 'button',
+    tagName: 'BUTTON',
+    innerText: 'Second duplicate',
+    textContent: 'Second duplicate',
+    getAttribute: (name) => (name === 'type' ? 'button' : undefined),
+  });
+
+  const event = await recordFixtureEvent(second, 'click', {
+    querySelectorAll: (selector) => (selector === 'button[type="button"]' ? [first, second] : []),
+  });
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.target.structural.selector, 'button[type="button"]');
+  assert.equal(event.target.structural.nth, 1);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'click', target: event.target },
+  ]);
+});
+
+test('recorded selector target omits semantic fields that override replay selector', async () => {
+  const button = fakeRecordedElement({
+    id: 'submit',
+    innerText: 'Submit',
+    textContent: 'Submit',
+    getAttribute: (name) => {
+      if (name === 'role') return 'button';
+      if (name === 'placeholder') return 'Search docs';
+      if (name === 'aria-label') return 'Submit form';
+      return undefined;
+    },
+  });
+
+  const event = await recordFixtureEvent(button, 'click', {
+    querySelectorAll: (selector) => (selector === '#submit' ? [button] : []),
+  });
+
+  assert.equal(Object.keys(event.target.semantic).length, 0);
+  assert.equal(event.target.structural.selector, '#submit');
+  assert.equal(event.target.structural.nth, undefined);
+});
+
+test('startRecorderSession reuses page binding and routes events to active session', async () => {
+  const { startRecorderSession, stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-binding-'));
+  try {
+    const page = {
+      binding: undefined,
+      bindingCalls: 0,
+      currentUrl: 'https://example.test/start',
+      async exposeBinding(name, callback) {
+        assert.equal(name, '__siteflowRecordEvent');
+        if (this.binding) throw new Error('duplicate binding');
+        this.binding = callback;
+        this.bindingCalls += 1;
+      },
+      async addInitScript() {},
+      async evaluate() {},
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const first = await startRecorderSession(page, 1, { out: path.join(temp, 'first.json') });
+    assert.equal(page.bindingCalls, 1);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'click',
+      target: { semantic: { text: 'First' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+    assert.equal(first.events.length, 1);
+
+    const second = await startRecorderSession(page, 1, { out: path.join(temp, 'second.json') });
+    assert.equal(page.bindingCalls, 1);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'Second' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+
+    assert.equal(first.events.length, 1);
+    assert.equal(second.events.length, 1);
+
+    await stopRecorderSession(second);
+    await page.binding({}, {
+      ts: '2026-06-05T00:00:03.000Z',
+      type: 'click',
+      target: { semantic: { text: 'After stop' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    });
+    assert.equal(second.events.length, 1);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('BrowserRuntime startRecorder rejects when recorder is already active', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const runtime = new BrowserRuntime('unit-recorder-active');
+  let launched = false;
+  runtime.ensureLaunched = async () => {
+    launched = true;
+  };
+  runtime.recorderSession = {
+    id: 'session-active',
+    pageId: 1,
+    startedAt: '2026-06-06T00:00:00.000Z',
+    out: '/tmp/siteflow-active-recorder.json',
+    startUrl: 'https://example.test/start',
+    events: [],
+  };
+
+  await assert.rejects(
+    () => runtime.startRecorder({ out: '/tmp/siteflow-next-recorder.json' }),
+    error => error.code === 'RECORDER_ALREADY_RUNNING' && /already running/i.test(error.message),
+  );
+  assert.equal(launched, false);
+  assert.equal(runtime.recorderSession.out, '/tmp/siteflow-active-recorder.json');
+});
+
+test('BrowserRuntime stopRecorder clears session when serialization fails after stop', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-stop-fail-'));
+  try {
+    const runtime = new BrowserRuntime('unit-recorder-stop-fail');
+    runtime.recorderSession = {
+      id: 'session-stop-fail',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out: temp,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
+
+    await assert.rejects(
+      () => runtime.stopRecorder(),
+      error => error?.code === 'EISDIR' || error?.code === 'EACCES' || error?.code === 'EPERM',
+    );
+    assert.equal(runtime.recorderSession, null);
+    assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('BrowserRuntime close preserves active recorder session until stop writes it', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-reset-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-reset');
+    runtime.recorderSession = {
+      id: 'session-reset',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
+
+    await runtime.close();
+
+    assert.equal(runtime.recorderStatus().recording, true);
+    const result = await runtime.stopRecorder();
+    assert.equal(result.out, out);
+    assert.equal(runtime.recorderSession, null);
+    assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('BrowserRuntime attach preserves active recorder and blocks new starts until stop', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-attach-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-attach-reset');
+    runtime.recorderSession = {
+      id: 'session-attach-reset',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
+
+    const result = await runtime.attach('http://127.0.0.1:9222', async () => ({
+      browser: { close: async () => {} },
+      context: { pages: () => [], on: () => {} },
+    }));
+
+    assert.deepEqual(result.pages, []);
+    assert.equal(runtime.recorderStatus().recording, true);
+    await assert.rejects(
+      () => runtime.startRecorder({ out: path.join(temp, 'next.json') }),
+      error => error.code === 'RECORDER_ALREADY_RUNNING',
+    );
+    await runtime.stopRecorder();
+    assert.equal(runtime.recorderSession, null);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('BrowserRuntime preserves active recorder when recorded page closes', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-page-close-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-page-close');
+    const handlers = {};
+    const page = {
+      isClosed: () => false,
+      url: () => 'https://example.test/start',
+      title: async () => 'Start',
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+    };
+    const pageId = runtime.adoptPage(page);
+    runtime.recorderSession = {
+      id: 'session-page-close',
+      pageId,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
+
+    handlers.close();
+
+    assert.equal(runtime.recorderStatus().recording, true);
+    const result = await runtime.stopRecorder();
+    assert.equal(result.out, out);
+    assert.equal(runtime.recorderSession, null);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-session-isolation-'));
+  try {
+    const setupEvent = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/setup',
+      title: 'Setup',
+    };
+    const page = {
+      binding: undefined,
+      currentUrl: 'https://example.test/start',
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
+      async addInitScript() {},
+      async evaluate(arg) {
+        if (typeof arg !== 'string' && this.binding) await this.binding({}, setupEvent);
+      },
+      async goto(url) {
+        this.currentUrl = url;
+        if (this.binding) await this.binding({}, setupEvent);
+      },
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const first = await startRecorderSession(page, 1, { out: path.join(temp, 'first.json') });
+    const userEvent = {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'First' }, confidence: 'high' },
+      url: 'https://example.test/start',
+      title: 'Start',
+    };
+    await page.binding({}, userEvent);
+
+    const second = await startRecorderSession(page, 1, { out: path.join(temp, 'second.json'), url: 'https://example.test/setup' });
+
+    assert.deepEqual(first.events, [userEvent]);
+    assert.equal(second.events.length, 0);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('startRecorderSession uses settled page URL after requested navigation', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-settled-url-'));
+  try {
+    const page = {
+      currentUrl: 'https://example.test/before',
+      async exposeBinding() {},
+      async addInitScript() {},
+      async evaluate() {},
+      async goto(url) {
+        assert.equal(url, 'https://example.test/start');
+        this.currentUrl = 'https://example.test/settled';
+      },
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const session = await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json'), url: 'https://example.test/start' });
+
+    assert.equal(session.startUrl, 'https://example.test/settled');
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+
+test('recorded contenteditable input with semantic label normalizes to type step with visible text value', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const editor = fakeRecordedElement({
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: '',
+    getAttribute: (name) => (name === 'aria-label' ? 'Comment editor' : undefined),
+  });
+
+  const event = await recordFixtureEvent(editor, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'contenteditable');
+  assert.equal(event.value, 'Draft comment');
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'type', target: event.target, value: 'Draft comment', clear: true },
+  ]);
+});
+
+test('recorded geometry-only contenteditable input is skipped because Phase 1 cannot replay it', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const editor = fakeRecordedElement({
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: '',
+    getAttribute: () => undefined,
+  });
+
+  const event = await recordFixtureEvent(editor, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'contenteditable');
+  assert.equal(event.value, 'Draft comment');
+  assert.equal(event.target.semantic.aria, undefined);
+  assert.equal(event.target.semantic.label, undefined);
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('control-less input and change events are unsupported and omit value', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const host = fakeRecordedElement({
+    id: 'custom-widget',
+    localName: 'div',
+    tagName: 'DIV',
+    innerText: 'Custom widget',
+    textContent: 'Custom widget',
+  });
+  const events = [
+    await recordFixtureEvent(host, 'input'),
+    await recordFixtureEvent(host, 'change'),
+  ];
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-custom-host-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-custom-host-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events,
+    });
+
+    assert.deepEqual(events.map((event) => event.type), ['unsupported', 'unsupported']);
+    assert.deepEqual(events.map((event) => event.control), [undefined, undefined]);
+    assert.deepEqual(events.map((event) => event.value), [undefined, undefined]);
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('recorded selector-less select is skipped because Phase 1 cannot replay the post-change option target', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: () => undefined,
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'select');
+  assert.equal(event.option, 'Canada');
+  assert.equal(event.target.semantic.text, 'Canada');
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('recorded multi-select change is unsupported because Phase 1 cannot replay multiple options', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    multiple: true,
+    value: 'CA',
+    selectedOptions: [
+      { innerText: 'Canada', textContent: 'Canada' },
+      { innerText: 'France', textContent: 'France' },
+    ],
+    getAttribute: (name) => (name === 'name' ? 'countries' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-multiselect-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-multiselect-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('recorded sensitive select change is unsupported and omits selected option text', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    id: 'email-recipient',
+    value: 'alice@example.test',
+    selectedOptions: [{
+      label: 'alice@example.test',
+      innerText: 'alice@example.test',
+      textContent: 'alice@example.test',
+      value: 'alice@example.test',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'recipient_email' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-sensitive-select-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-sensitive-select',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(event.target.semantic.text, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('recorded select with duplicate visible option labels is unsupported and omits option text', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'team-b',
+    options: [
+      { label: 'Team', innerText: 'Team', textContent: 'Team', value: 'team-a' },
+      { label: 'Team', innerText: 'Team', textContent: 'Team', value: 'team-b' },
+      { label: 'Admin', innerText: 'Admin', textContent: 'Admin', value: 'admin' },
+    ],
+    selectedOptions: [{
+      label: 'Team',
+      innerText: 'Team',
+      textContent: 'Team',
+      value: 'team-b',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'role' : undefined),
+  }));
+  const event = await recordFixtureEvent(select, 'change');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-ambiguous-select-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-ambiguous-select',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [event],
+    });
+
+    assert.equal(event.type, 'unsupported');
+    assert.equal(event.control, undefined);
+    assert.equal(event.option, undefined);
+    assert.equal(event.value, undefined);
+    assert.equal(event.target.semantic.text, undefined);
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('recorded select with stable selector omits semantic selected option text', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'select');
+  assert.equal(event.option, 'Canada');
+  assert.equal(event.target.structural.selector, 'select[name="country"]');
+  assert.equal(event.target.semantic.text, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: event.target, option: 'Canada' },
+  ]);
+});
+
+test('recorded select prefers option label over text and value', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'us',
+    selectedOptions: [{
+      label: 'United States',
+      innerText: 'US',
+      textContent: 'US',
+      value: 'us',
+    }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.option, 'United States');
+  assert.equal(event.target.semantic.text, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: event.target, option: 'United States' },
+  ]);
+});
+
+test('recorded select normalizes option label whitespace', async () => {
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'enterprise',
+    selectedOptions: [{
+      label: '  Enterprise\n  Plan\t ',
+      innerText: 'ignored',
+      textContent: 'ignored',
+      value: 'enterprise',
+    }],
+    getAttribute: () => undefined,
+  }));
+
+  const event = await recordFixtureEvent(select, 'change');
+
+  assert.equal(event.option, 'Enterprise Plan');
+  assert.equal(event.target.semantic.text, 'Enterprise Plan');
+});
+
+test('normalizeRecordedEvents omits zero nth from selector-backed select steps', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]', nth: 0 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'select',
+      target: { semantic: { label: 'Country' }, structural: { selector: 'select[name="country"]' }, confidence: 'high' },
+      option: 'Canada',
+    },
+  ]);
+});
+
+test('normalizeRecordedEvents skips duplicate selector-backed selects with nth greater than zero', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const target = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]', nth: 1 },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'change',
+        control: 'select',
+        target,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('recorded select click with stable selector omits stale option text', async () => {
+  const select = Object.assign(new FakeSelectElement(), fakeRecordedElement({
+    localName: 'select',
+    tagName: 'SELECT',
+    value: 'CA',
+    innerText: 'United States Canada',
+    textContent: 'United States Canada',
+    selectedOptions: [{ innerText: 'Canada', textContent: 'Canada' }],
+    getAttribute: (name) => (name === 'name' ? 'country' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(select, 'click');
+
+  assert.equal(event.target.structural.selector, 'select[name="country"]');
+  assert.equal(event.target.semantic.text, undefined);
+});
+
+test('recorded contenteditable click with stable selector omits editable body text', async () => {
+  const editor = fakeRecordedElement({
+    id: 'editor',
+    isContentEditable: true,
+    innerText: 'Draft comment',
+    textContent: 'Draft comment',
+  });
+
+  const event = await recordFixtureEvent(editor, 'click');
+
+  assert.equal(event.target.structural.selector, '#editor');
+  assert.equal(event.target.semantic.text, undefined);
+});
+
+test('recorded anonymous text input without stable semantics is skipped', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'text',
+    value: 'anonymous',
+    getAttribute: (name) => (name === 'type' ? 'text' : undefined),
+  }));
+
+  const event = await recordFixtureEvent(input, 'input');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+
+  assert.equal(event.control, 'input');
+  assert.equal(event.value, 'anonymous');
+  assert.equal(event.target.semantic.aria, undefined);
+  assert.equal(event.target.semantic.label, undefined);
+  assert.equal(event.target.structural.selector, undefined);
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+  ]);
+});
+
+test('normalizeRecordedEvents removes preceding select click when select change records same target', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const clickTarget = {
+    semantic: { text: 'United States Canada' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+  const selectTarget = {
+    semantic: { label: 'Country' },
+    structural: { selector: 'select[name="country"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: clickTarget, url: 'https://example.test/form', title: 'Form' },
+      {
+        ts: '2026-06-05T00:00:02.000Z',
+        type: 'change',
+        control: 'select',
+        target: selectTarget,
+        value: 'CA',
+        option: 'Canada',
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    { id: 'step-2', type: 'select', target: selectTarget, option: 'Canada' },
+  ]);
+});
+
+test('unsupported selector-less select click and change removes click and counts unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-select-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const clickTarget = {
+      semantic: { text: 'United States Canada' },
+      geometry: { x: 50, y: 20, width: 100, height: 40 },
+      confidence: 'high',
+    };
+    const selectTarget = {
+      semantic: { text: 'Canada' },
+      geometry: { x: 50, y: 20, width: 100, height: 40 },
+      confidence: 'high',
+    };
+
+    const result = await stopRecorderSession({
+      id: 'session-select-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: clickTarget, url: 'https://example.test/form', title: 'Form' },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'change',
+          control: 'select',
+          target: selectTarget,
+          value: 'CA',
+          option: 'Canada',
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('recorded checkbox radio and file input changes become unsupported events', async () => {
+  for (const type of ['checkbox', 'radio', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type,
+      value: type === 'file' ? '/tmp/private.txt' : 'on',
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'name') return `${type}-control`;
+        return undefined;
+      },
+    }));
+
+    const payloads = await recordFixturePayloads(input, 'change');
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+  }
+});
+
+test('unsupported checkbox radio and file input clicks become unsupported events', async () => {
+  for (const type of ['checkbox', 'radio', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type,
+      value: type === 'file' ? '/tmp/private.txt' : 'on',
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'name') return `${type}-control`;
+        return undefined;
+      },
+    }));
+
+    const payloads = await recordFixturePayloads(input, 'click');
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+  }
+});
+
+test('dragstart and drop record unsupported events with target source', async () => {
+  for (const type of ['dragstart', 'drop']) {
+    const item = fakeRecordedElement({
+      localName: 'div',
+      tagName: 'DIV',
+      id: 'draggable-item',
+    });
+
+    const payloads = await recordFixturePayloads(item, type);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].target.structural.selector, '#draggable-item');
+  }
+});
+
+test('unsupported input event removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-input-unsupported-click-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      geometry: { x: 50, y: 20, width: 100, height: 30 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-input-unsupported-click',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'input', control: 'input', target, value: 'orphan', url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported event removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      structural: { selector: 'input[type="checkbox"]' },
+      geometry: { x: 50, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported selector nth 1 event preserves preceding click on same selector nth 0', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-nth-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const firstTarget = {
+      structural: { selector: 'input[type="checkbox"]', nth: 0 },
+      geometry: { x: 50, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const secondTarget = {
+      structural: { selector: 'input[type="checkbox"]', nth: 1 },
+      geometry: { x: 80, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-nth-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: firstTarget, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: secondTarget, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+      { id: 'step-2', type: 'click', target: firstTarget },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported event after different target preserves immediately preceding click', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-proxy-click-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const proxyTarget = {
+      semantic: { text: 'Accept terms' },
+      structural: { selector: 'label[for="terms"]' },
+      geometry: { x: 50, y: 20, width: 100, height: 30 },
+      confidence: 'high',
+    };
+    const controlTarget = {
+      structural: { selector: '#terms' },
+      geometry: { x: 10, y: 20, width: 20, height: 20 },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-proxy-click-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'click', target: proxyTarget, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: controlTarget, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+      { id: 'step-2', type: 'click', target: proxyTarget },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('label proxy clicks for unsupported inputs record unsupported source target', async () => {
+  for (const type of ['checkbox', 'file']) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      id: `${type}-control`,
+      type,
+      getAttribute: (name) => {
+        if (name === 'type') return type;
+        if (name === 'id') return `${type}-control`;
+        return undefined;
+      },
+    }));
+    const label = fakeRecordedElement({
+      localName: 'label',
+      tagName: 'LABEL',
+      textContent: `Upload ${type}`,
+      getAttribute: (name) => (name === 'for' ? `${type}-control` : undefined),
+    });
+
+    const payloads = await recordFixturePayloads(label, 'click', {
+      getElementById: (id) => (id === `${type}-control` ? input : null),
+    });
+
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].type, 'unsupported');
+    assert.equal(payloads[0].value, undefined);
+    assert.equal(payloads[0].target.structural.selector, `#${type}-control`);
+  }
+});
+
+test('recorder injection exposes synchronous scroll flush function', async () => {
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const source = recorderInjectionSource();
+  assert.match(source, /window\.__siteflowFlushRecorder\s*=/);
+  assert.match(source, /clearTimeout\(scrollTimer\)/);
+});
+
+test('recorder injection exposes reset and flushes scroll before state-changing events', async () => {
+  const { recorderInjectionSource } = await import('../../dist/runtime/recorder-runtime.js');
+  const source = recorderInjectionSource();
+  assert.match(source, /window\.__siteflowResetRecorder\s*=/);
+  assert.match(source, /function resetRecorderState\(\)/);
+  assert.match(source, /lastScrollX\s*=\s*window\.scrollX/);
+  assert.match(source, /lastScrollY\s*=\s*window\.scrollY/);
+  assert.match(source, /document\.addEventListener\('click',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(/);
+  assert.match(source, /function recordValueEvent\(event\) \{[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(payload\);/);
+  assert.match(source, /document\.addEventListener\('keydown',[\s\S]*?flushPendingScroll\(\);[\s\S]*?record\(\{/);
+});
+
+test('recorder input flushes pending scroll before recording value', async () => {
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    id: 'search',
+    value: 'hello',
+    getAttribute: (name) => (name === 'type' ? 'text' : undefined),
+  }));
+
+  const payloads = await recordFixturePayloads(input, 'input', { scrollBeforeEvent: { x: 0, y: 120 } });
+
+  assert.deepEqual(payloads.map((payload) => payload.type), ['scroll', 'input']);
+  assert.equal(payloads[0].deltaX, 0);
+  assert.equal(payloads[0].deltaY, 120);
+  assert.equal(payloads[1].value, 'hello');
+});
+
+test('startRecorderSession ignores initial navigation and reset events before returning active session', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-reset-'));
+  try {
+    const calls = [];
+    const pageLoadScroll = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/loaded',
+      title: 'Loaded',
+    };
+    const userClick = {
+      ts: '2026-06-05T00:00:02.000Z',
+      type: 'click',
+      target: { semantic: { text: 'Ready' }, confidence: 'high' },
+      url: 'https://example.test/loaded',
+      title: 'Loaded',
+    };
+    const page = {
+      binding: undefined,
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
+      async addInitScript(source) {
+        calls.push(typeof source);
+      },
+      async evaluate(arg) {
+        calls.push(typeof arg === 'string' ? 'inject' : 'reset');
+        if (this.binding) await this.binding({}, pageLoadScroll);
+      },
+      async goto(url) {
+        calls.push(`goto:${url}`);
+        if (this.binding) await this.binding({}, pageLoadScroll);
+      },
+      url() {
+        return 'https://example.test/start';
+      },
+    };
+
+    const session = await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json'), url: 'https://example.test/loaded' });
+    assert.deepEqual(calls, ['string', 'inject', 'goto:https://example.test/loaded', 'reset']);
+    assert.equal(session.events.length, 0);
+
+    await page.binding({}, userClick);
+    assert.deepEqual(session.events, [userClick]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('stopRecorderSession flushes pending page scroll before serializing', async () => {
+  const { startRecorderSession, stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-flush-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const pendingScroll = {
+      ts: '2026-06-05T00:00:01.000Z',
+      type: 'scroll',
+      deltaX: 0,
+      deltaY: 240,
+      url: 'https://example.test/start',
+      title: 'Start',
+    };
+    const page = {
+      binding: undefined,
+      async exposeBinding(_name, callback) {
+        this.binding = callback;
+      },
+      async addInitScript() {},
+      async evaluate(arg) {
+        if (typeof arg === 'function' && arg.toString().includes('__siteflowFlushRecorder')) await this.binding({}, pendingScroll);
+      },
+      url() {
+        return 'https://example.test/start';
+      },
+    };
+
+    const session = await startRecorderSession(page, 1, { out });
+    const result = await stopRecorderSession(session);
+
+    assert.equal(result.unsupportedEvents, 0);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/start' },
+      { id: 'step-2', type: 'scroll', deltaX: 0, deltaY: 240 },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported checkbox radio and file events count unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-unsupported-controls-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-unsupported-controls',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="checkbox"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="radio"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:03.000Z', type: 'unsupported', target: { structural: { selector: 'input[type="file"]' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 3);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('drag and drop unsupported events count unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-drag-drop-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-drag-drop-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        { ts: '2026-06-05T00:00:01.000Z', type: 'unsupported', target: { structural: { selector: '#draggable-item' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+        { ts: '2026-06-05T00:00:02.000Z', type: 'unsupported', target: { structural: { selector: '#drop-zone' }, confidence: 'high' }, url: 'https://example.test/form', title: 'Form' },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('email and tel inputs are recorded as sensitive and counted unsupported on stop', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-contact-sensitive-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const events = [];
+    for (const type of ['email', 'tel']) {
+      const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+        localName: 'input',
+        tagName: 'INPUT',
+        type,
+        value: type === 'email' ? 'user@example.test' : '+15551234567',
+        getAttribute: (name) => {
+          if (name === 'type') return type;
+          if (name === 'name') return `${type}-control`;
+          return undefined;
+        },
+      }));
+
+      const event = await recordFixtureEvent(input, 'input');
+      assert.equal(event.control, 'input');
+      assert.equal(event.sensitive, true);
+      assert.equal(event.value, undefined);
+      events.push(event);
+    }
+
+    const result = await stopRecorderSession({
+      id: 'session-contact-sensitive',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events,
+    });
+
+    const written = await readFile(out, 'utf8');
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+    assert.equal(written.includes('user@example.test'), false);
+    assert.equal(written.includes('+15551234567'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('clicks on sensitive input controls are recorded unsupported instead of replayable clicks', async () => {
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'email',
+    getAttribute: (name) => {
+      if (name === 'type') return 'email';
+      if (name === 'name') return 'email-control';
+      return undefined;
+    },
+  }));
+
+  const event = await recordFixtureEvent(input, 'click');
+
+  assert.equal(event.type, 'unsupported');
+  assert.equal(event.value, undefined);
+  assert.equal(event.target.structural.selector, 'input[name="email-control"]');
+});
+
+test('benign editable field names containing sensitive substrings are not recorded as sensitive', async () => {
+  const cases = ['headphone-model', 'microphone-name', 'scorecard-title'];
+  for (const name of cases) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type: 'text',
+      value: 'public value',
+      getAttribute: (attribute) => {
+        if (attribute === 'type') return 'text';
+        if (attribute === 'name') return name;
+        return undefined;
+      },
+    }));
+
+    const event = await recordFixtureEvent(input, 'input');
+
+    assert.equal(event.control, 'input');
+    assert.notEqual(event.sensitive, true);
+    assert.equal(event.value, 'public value');
+    assert.equal(event.target.structural.selector, `input[name="${name}"]`);
+  }
+});
+
+test('clicks on non-editable sensitive-looking controls are recorded as clicks', async () => {
+  const button = fakeRecordedElement({
+    id: 'email-token',
+    localName: 'button',
+    tagName: 'BUTTON',
+    innerText: 'Email token',
+    textContent: 'Email token',
+    getAttribute: (name) => (name === 'id' ? 'email-token' : undefined),
+  });
+  const link = fakeRecordedElement({
+    id: 'phone-card-link',
+    localName: 'a',
+    tagName: 'A',
+    innerText: 'Phone card details',
+    textContent: 'Phone card details',
+    getAttribute: (name) => (name === 'id' ? 'phone-card-link' : undefined),
+  });
+
+  const buttonEvent = await recordFixtureEvent(button, 'click');
+  const linkEvent = await recordFixtureEvent(link, 'click');
+
+  assert.equal(buttonEvent.type, 'click');
+  assert.equal(linkEvent.type, 'click');
+  assert.equal(buttonEvent.target.structural.selector, '#email-token');
+  assert.equal(linkEvent.target.structural.selector, '#phone-card-link');
+});
+
+test('stopRecorderSession skips sensitive input and change events and counts them unsupported', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-sensitive-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'API key' },
+      structural: { selector: 'input[name="api_key"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-sensitive',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/settings',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'input',
+          control: 'input',
+          value: 'super-secret-token',
+          target,
+          url: 'https://example.test/settings',
+          title: 'Settings',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'change',
+          control: 'input',
+          value: 'another-secret',
+          target,
+          url: 'https://example.test/settings',
+          title: 'Settings',
+        },
+      ],
+    });
+
+    const written = await readFile(out, 'utf8');
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/settings' },
+    ]);
+    assert.equal(written.includes('super-secret-token'), false);
+    assert.equal(written.includes('another-secret'), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('form-associated Enter keydown records mutating and normalizes to mutating pressEnter', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+    localName: 'input',
+    tagName: 'INPUT',
+    type: 'text',
+    form: {},
+    getAttribute: (name) => {
+      if (name === 'type') return 'text';
+      if (name === 'name') return 'q';
+      return undefined;
+    },
+  }));
+
+  const event = await recordFixtureEvent(input, 'keydown', { key: 'Enter' });
+  assert.equal(event.type, 'keydown');
+  assert.equal(event.control, 'input');
+  assert.equal(event.mutating, true);
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [event],
+  });
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'type',
+      target: event.target,
+      value: '',
+      clear: false,
+      pressEnter: true,
+      mutating: true,
+    },
+  ]);
+});
+
+test('normalizeRecordedEvents skips mutating submit click after Enter press submit', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const inputTarget = {
+    semantic: { label: 'Search' },
+    structural: { selector: 'input[name="q"]' },
+    confidence: 'high',
+  };
+  const submitTarget = {
+    semantic: { text: 'Submit' },
+    structural: { selector: 'button[type="submit"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'keydown',
+        control: 'input',
+        key: 'Enter',
+        target: inputTarget,
+        mutating: true,
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+      {
+        ts: '2026-06-05T00:00:01.010Z',
+        type: 'click',
+        target: submitTarget,
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'type',
+      target: inputTarget,
+      value: '',
+      clear: false,
+      pressEnter: true,
+      mutating: true,
+    },
+  ]);
+});
+
+test('geometry-only Enter keydown is unsupported and not normalized to type', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-enter-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      geometry: { x: 10, y: 20, width: 100, height: 30 },
+      confidence: 'low',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-enter-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Enter',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('selector-backed non-input Enter keydown is counted unsupported', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-button-enter-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { text: 'Submit' },
+      structural: { selector: 'button[type="submit"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-button-enter-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          key: 'Enter',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('Tab and Escape keydowns are counted unsupported when not replayed', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-keydown-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Search' },
+      structural: { selector: 'input[name="q"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-keydown-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Tab',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'keydown',
+          control: 'input',
+          key: 'Escape',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported Escape keydown removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-escape-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Country' },
+      structural: { selector: 'select[name="country"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-click-escape-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'click',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'keydown',
+          control: 'select',
+          key: 'Escape',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('normalizeRecordedEvents ignores Enter keydown for multiline controls', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const textareaTarget = {
+    semantic: { label: 'Message' },
+    structural: { selector: 'textarea[name="message"]' },
+    confidence: 'high',
+  };
+  const editorTarget = {
+    semantic: { aria: 'Comment editor' },
+    structural: { selector: '#editor' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/comment',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'keydown',
+        control: 'textarea',
+        key: 'Enter',
+        target: textareaTarget,
+        url: 'https://example.test/comment',
+        title: 'Comment',
+      },
+      {
+        ts: '2026-06-05T00:00:02.000Z',
+        type: 'keydown',
+        control: 'contenteditable',
+        key: 'Enter',
+        target: editorTarget,
+        url: 'https://example.test/comment',
+        title: 'Comment',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/comment' },
+  ]);
+});
+
+test('stopRecorderSession writes workflow JSON to nested output directories', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-out-'));
+  try {
+    const out = path.join(temp, 'nested', 'recordings', 'workflow.json');
+    const result = await stopRecorderSession({
+      id: 'session-nested',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test',
+      events: [],
+    });
+
+    const written = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(result.out, out);
+    assert.equal(result.steps, 1);
+    assert.equal(written.kind, 'siteflow.workflow');
+    assert.deepEqual(written.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('recorder start CLI resolves relative output path before daemon request', async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-cli-out-'));
+  let server;
+  try {
+    const profile = `recorder-start-${Date.now()}`;
+    const repoRoot = path.resolve(import.meta.dirname, '../..');
+    const relativeOut = path.join('recordings', 'workflow.json');
+    let receivedBody;
+    server = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, data: { profile } }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/recorder/start') {
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          receivedBody = JSON.parse(raw);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data: { recording: true, pageId: 4, events: 0 } }));
+        });
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const daemonDir = path.join(temp, 'profiles', profile);
+    fs.mkdirSync(daemonDir, { recursive: true });
+    fs.writeFileSync(path.join(daemonDir, 'daemon.json'), JSON.stringify({
+      pid: process.pid,
+      port,
+      profile,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      baseUrl: `http://127.0.0.1:${port}`,
+    }));
+
+    const result = await new Promise(resolve => {
+      const child = spawn(process.execPath, [
+        'dist/cli/main.js',
+        '--json',
+        '--profile',
+        profile,
+        'recorder',
+        'start',
+        '--out',
+        relativeOut,
+        '--url',
+        'https://example.test/start',
+        '--page-id',
+        '4',
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, SITEFLOW_HOME: temp },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.on('close', status => resolve({ status, stdout, stderr }));
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(receivedBody, {
+      out: path.resolve(repoRoot, relativeOut),
+      url: 'https://example.test/start',
+      pageId: 4,
+    });
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+test('workflow command modules are importable after CLI wiring', async () => {
+  const client = await import('../../dist/daemon/client.js');
+  assert.equal(typeof client.startRecorder, 'function');
+  assert.equal(typeof client.stopRecorder, 'function');
+  assert.equal(typeof client.runReplayWorkflow, 'function');
+  assert.equal(typeof client.runReplayWorkflowFile, 'function');
+  assert.equal(typeof client.exportReplayCli, 'function');
+});
