@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import { Command } from 'commander';
 import {
@@ -27,6 +28,11 @@ import {
   requestCurl,
   requestReplay,
   breakText,
+  startRecorder,
+  getRecorderStatus,
+  stopRecorder,
+  runReplayWorkflow,
+  exportReplayCli,
   breakXhr,
   installHook,
   listHooks,
@@ -237,6 +243,15 @@ async function run(command: Command, fn: (opts: OutputOptions) => Promise<unknow
     }, opts);
     process.exitCode = 1;
   }
+}
+
+async function readJsonFile(file: string): Promise<unknown> {
+  return JSON.parse(await fsp.readFile(file, 'utf8'));
+}
+
+async function writeTextFileCreatingParents(file: string, content: string): Promise<void> {
+  await fsp.mkdir(path.dirname(path.resolve(file)), { recursive: true });
+  await fsp.writeFile(file, content, { encoding: 'utf8', mode: 0o700 });
 }
 
 const program = new Command();
@@ -1020,6 +1035,73 @@ trace
         }
       }
       return { file, execute: true, replayed: results.length, results };
+    });
+  });
+
+const recorder = program.command('recorder').description('Workflow recorder commands');
+
+recorder
+  .command('start')
+  .description('Start recording browser actions into a workflow JSON file')
+  .requiredOption('--out <path>', 'output workflow JSON path')
+  .option('--url <url>', 'navigate the recorded page before recording starts')
+  .option('--page-id <id>', 'page id to record')
+  .action(async function () {
+    await run(this, opts => {
+      const local = this.opts<{ out: string; url?: string; pageId?: string }>();
+      const pageId = local.pageId === undefined ? undefined : Number.parseInt(local.pageId, 10);
+      if (local.pageId !== undefined && !Number.isFinite(pageId)) throw new Error('--page-id must be a number');
+      return startRecorder(opts.profile, {
+        out: local.out,
+        ...(local.url === undefined ? {} : { url: local.url }),
+        ...(pageId === undefined ? {} : { pageId }),
+      });
+    });
+  });
+
+recorder
+  .command('status')
+  .description('Show active workflow recorder status')
+  .action(async function () {
+    await run(this, opts => getRecorderStatus(opts.profile));
+  });
+
+recorder
+  .command('stop')
+  .description('Stop recording and write the workflow JSON file')
+  .action(async function () {
+    await run(this, opts => stopRecorder(opts.profile));
+  });
+
+const replay = program.command('replay').description('Workflow replay commands');
+
+replay
+  .command('run')
+  .description('Run or dry-run a workflow JSON file')
+  .argument('<workflow>', 'workflow JSON file')
+  .option('--dry-run', 'validate and report replay steps without executing')
+  .option('--stop-before-mutating', 'stop before the first mutating step')
+  .action(async function (workflow: string) {
+    await run(this, async opts => {
+      const local = this.opts<{ dryRun?: boolean; stopBeforeMutating?: boolean }>();
+      return runReplayWorkflow(opts.profile, await readJsonFile(workflow), {
+        dryRun: Boolean(local.dryRun),
+        stopBeforeMutating: Boolean(local.stopBeforeMutating),
+      });
+    });
+  });
+
+replay
+  .command('export-cli')
+  .description('Export a workflow JSON file to a replayable shell script')
+  .argument('<workflow>', 'workflow JSON file')
+  .requiredOption('--out <path>', 'output shell script path')
+  .action(async function (workflow: string) {
+    await run(this, async opts => {
+      const local = this.opts<{ out: string }>();
+      const result = await exportReplayCli(opts.profile, await readJsonFile(workflow));
+      await writeTextFileCreatingParents(local.out, result.script);
+      return { out: local.out, bytes: Buffer.byteLength(result.script), script: `[written:${local.out}]` };
     });
   });
 

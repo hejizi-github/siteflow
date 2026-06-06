@@ -2606,3 +2606,11 @@ test('stopRecorderSession writes workflow JSON to nested output directories', as
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test('workflow command modules are importable after CLI wiring', async () => {
+  const client = await import('../../dist/daemon/client.js');
+  assert.equal(typeof client.startRecorder, 'function');
+  assert.equal(typeof client.stopRecorder, 'function');
+  assert.equal(typeof client.runReplayWorkflow, 'function');
+  assert.equal(typeof client.exportReplayCli, 'function');
+});

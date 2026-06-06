@@ -32,6 +32,13 @@ import type {
   ScriptSearchMatch,
   StorageSnapshot,
 } from '../shared/types.js';
+import type {
+  RecorderStartOptions,
+  RecorderStatus,
+  RecorderStopResult,
+  ReplayRunOptions,
+  ReplayRunResult,
+} from '../runtime/workflow-types.js';
 import { ensureProfileDirs } from '../shared/paths.js';
 import { probeDaemon, assertNoRunningDaemon } from './lock.js';
 import { readDaemonInfo } from './state.js';
@@ -234,6 +241,26 @@ export async function requestReplayWithBody(profile: string, id: number, body: s
 
 export async function requestReplayWithUrl(profile: string, id: number, url: string): Promise<RequestReplayResult> {
   return call(profile, 'POST', `/request/${id}/replay`, { url });
+}
+
+export async function startRecorder(profile: string, options: RecorderStartOptions): Promise<RecorderStatus> {
+  return call(profile, 'POST', '/recorder/start', options);
+}
+
+export async function getRecorderStatus(profile: string): Promise<RecorderStatus> {
+  return call(profile, 'GET', '/recorder/status');
+}
+
+export async function stopRecorder(profile: string): Promise<RecorderStopResult> {
+  return call(profile, 'POST', '/recorder/stop');
+}
+
+export async function runReplayWorkflow(profile: string, workflow: unknown, options: ReplayRunOptions = {}): Promise<ReplayRunResult> {
+  return call(profile, 'POST', '/replay/run', { workflow, options });
+}
+
+export async function exportReplayCli(profile: string, workflow: unknown): Promise<{ script: string }> {
+  return call(profile, 'POST', '/replay/export-cli', { workflow });
 }
 
 export async function breakText(profile: string, query: string, scriptUrl?: string): Promise<BreakpointInfo[]> {
