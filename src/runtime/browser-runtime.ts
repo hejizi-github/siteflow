@@ -554,8 +554,12 @@ export class BrowserRuntime {
           continue;
         }
         await page.evaluate(values => {
-          localStorage.clear();
-          for (const [key, value] of Object.entries(values)) localStorage.setItem(key, String(value));
+          for (const key of Object.keys(localStorage)) {
+            if (!(key in values)) localStorage.removeItem(key);
+          }
+          for (const [key, value] of Object.entries(values)) {
+            localStorage.setItem(key, String(value));
+          }
         }, record.localStorage || {});
         origins += 1;
         keys += entries.length;
