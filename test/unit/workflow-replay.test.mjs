@@ -57,6 +57,35 @@ test('target matcher returns coordinates as the last fallback', async () => {
   assert.deepEqual(target, { x: 10, y: 21 });
 });
 
+test('matchedByForRecordedTarget returns geometry when no semantic or structural', async () => {
+  const { matchedByForRecordedTarget } = await import('../../dist/runtime/target-matcher.js');
+  assert.equal(matchedByForRecordedTarget({ geometry: { x: 10, y: 20 }, confidence: 'low' }), 'geometry');
+});
+
+test('matchedByForRecordedTarget returns none when no target info', async () => {
+  const { matchedByForRecordedTarget } = await import('../../dist/runtime/target-matcher.js');
+  assert.equal(matchedByForRecordedTarget({ confidence: 'low' }), 'none');
+});
+
+test('browserTargetFromRecordedTarget with placeholder quotes backslashes and quotes', async () => {
+  const { browserTargetFromRecordedTarget } = await import('../../dist/runtime/target-matcher.js');
+  const target = browserTargetFromRecordedTarget({
+    semantic: { placeholder: 'a"b' },
+    confidence: 'high',
+  });
+  assert.deepEqual(target, { selector: '[placeholder="a\\"b"]', exact: true });
+});
+
+test('clickOptionsFromRecordedTarget falls back to geometry after failed text match', async () => {
+  const { clickOptionsFromRecordedTarget } = await import('../../dist/runtime/target-matcher.js');
+  const options = clickOptionsFromRecordedTarget({
+    semantic: { aria: 'Search' },
+    geometry: { x: 10.29, y: 20.71 },
+    confidence: 'high',
+  });
+  assert.deepEqual(options, { aria: 'Search', exact: true });
+});
+
 test('runWorkflow dry-run reports steps without executing actions', async () => {
   const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
   const result = await runWorkflow({
@@ -297,6 +326,40 @@ test('runWorkflow executes replay steps with recorded target options', async () 
   ]);
   assert.equal(result.steps[1].targetMatchedBy, 'semantic.text');
 });
+
+test('runWorkflow type step omits clear and pressEnter when undefined', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const calls = [];
+  const result = await runWorkflow({
+    open: async (url) => {
+      calls.push(['open', url]);
+      return { id: 1, url, title: 'Opened', selected: true };
+    },
+    type: async (options) => {
+      calls.push(['type', options]);
+      return { action: 'type', target: 'Name', url: 'https://example.com/next' };
+    },
+    click: async () => { throw new Error('click should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'type', target: { semantic: { label: 'Name' }, confidence: 'high' }, value: 'Alice' },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls[1], ['type', { aria: 'Name', exact: true, value: 'Alice' }]);
+});
+
 
 test('runWorkflow stops before mutating step when requested', async () => {
   const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
