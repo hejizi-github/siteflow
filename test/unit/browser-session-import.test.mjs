@@ -101,3 +101,19 @@ test('storage import client wrapper is exported', async () => {
   const client = await import('../../dist/daemon/client.js');
   assert.equal(typeof client.importRuntimeStorage, 'function');
 });
+test('browser import orchestration builds preview receipts', async () => {
+  const { buildBrowserImportReceipt } = await mod();
+  const receipt = buildBrowserImportReceipt({
+    preview: true,
+    source: 'chrome:Default',
+    domain: undefined,
+    cookies: [{ name: 'a', value: 'secret', domain: '.x.com', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' }],
+    storage: [{ origin: 'https://x.com', localStorage: { token: 'secret' } }],
+    failedDecrypt: 0,
+    failedOrigins: [],
+  });
+  assert.equal(receipt.preview, true);
+  assert.equal(receipt.cookies.wouldImport, 1);
+  assert.equal(receipt.localStorage.wouldImportKeys, 1);
+  assert.equal(JSON.stringify(receipt).includes('secret'), false);
+});

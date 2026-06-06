@@ -1,7 +1,10 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as fsp from 'node:fs/promises';
+import { chromium } from 'playwright';
 import { SiteflowError } from '../shared/errors.js';
+import type { BrowserSessionImportReceipt, BrowserStorageRecord, CookieRecord } from '../shared/types.js';
 
 export type BrowserSourceKind = 'chrome' | 'chromium' | 'edge' | 'brave' | 'arc';
 
@@ -165,4 +168,161 @@ export function findBrowserSource(sources: BrowserSessionSource[], id: string): 
   const source = sources.find(candidate => candidate.id === id);
   if (!source) throw new SiteflowError('SOURCE_NOT_FOUND', `Browser source not found: ${id}`);
   return source;
+}
+
+export function normalizeImportDomain(domain: string): string {
+  return domain.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^\./, '').toLowerCase();
+}
+
+export function cookieDomainMatchesImportScope(cookieDomain: string, domain?: string): boolean {
+  if (!domain) return true;
+  const requested = normalizeImportDomain(domain);
+  const cookie = cookieDomain.replace(/^\./, '').toLowerCase();
+  return cookie === requested || cookie.endsWith(`.${requested}`);
+}
+
+export function originMatchesImportScope(origin: string, domain?: string): boolean {
+  if (!domain) return true;
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    const requested = normalizeImportDomain(domain);
+    return host === requested || host.endsWith(`.${requested}`);
+  } catch {
+    return false;
+  }
+}
+
+export function filterCookieRecords(cookies: CookieRecord[], domain?: string): CookieRecord[] {
+  return cookies.filter(cookie => cookieDomainMatchesImportScope(cookie.domain, domain));
+}
+
+export function summarizeCookieRecords(cookies: CookieRecord[], domain?: string): { count: number; domains: string[] } {
+  const filtered = filterCookieRecords(cookies, domain);
+  return { count: filtered.length, domains: [...new Set(filtered.map(cookie => cookie.domain))].sort() };
+}
+
+export async function createPrivateTempDir(prefix = 'siteflow-browser-import-'): Promise<string> {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
+  await fsp.chmod(dir, 0o700).catch(() => {});
+  return dir;
+}
+
+export async function copyUserDataSnapshot(source: BrowserSessionSource, tempRoot: string): Promise<string> {
+  const destination = path.join(tempRoot, `${source.browser}-${source.profile.replace(/[^a-zA-Z0-9._-]/g, '_')}`);
+  await fsp.cp(source.userDataDir, destination, {
+    recursive: true,
+    force: true,
+    errorOnExist: false,
+    filter: file => !file.includes('SingletonLock') && !file.includes('SingletonSocket') && !file.includes('SingletonCookie'),
+  });
+  return destination;
+}
+
+export function discoverLocalStorageOrigins(profileDir: string, domain?: string): string[] {
+  const leveldbDir = path.join(profileDir, 'Local Storage', 'leveldb');
+  if (!fs.existsSync(leveldbDir)) return [];
+  const origins = new Set<string>();
+  const pattern = /https?:\/\/[a-zA-Z0-9.-]+(?::\d+)?/g;
+  for (const entry of fs.readdirSync(leveldbDir)) {
+    if (!/\.(log|ldb)$/.test(entry)) continue;
+    const content = fs.readFileSync(path.join(leveldbDir, entry), 'utf8');
+    for (const match of content.matchAll(pattern)) {
+      const origin = match[0];
+      if (originMatchesImportScope(origin, domain)) origins.add(origin);
+    }
+  }
+  return [...origins].sort();
+}
+
+export interface ExtractBrowserSessionOptions {
+  source: BrowserSessionSource;
+  domain?: string;
+  cookiesOnly?: boolean;
+}
+
+export interface ExtractedBrowserSession {
+  cookies: CookieRecord[];
+  storage: BrowserStorageRecord[];
+  failedDecrypt: number;
+  failedOrigins: Array<{ origin: string; code: string; message: string }>;
+}
+
+export async function extractBrowserSession(options: ExtractBrowserSessionOptions): Promise<ExtractedBrowserSession> {
+  const tempRoot = await createPrivateTempDir();
+  let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
+  try {
+    const snapshotUserDataDir = await copyUserDataSnapshot(options.source, tempRoot);
+    const snapshotProfileDir = path.join(snapshotUserDataDir, options.source.profile);
+    context = await chromium.launchPersistentContext(snapshotUserDataDir, {
+      channel: process.env.SITEFLOW_BROWSER_CHANNEL || 'chrome',
+      headless: true,
+      args: ['--hide-crash-restore-bubble'],
+    });
+    const cookieRecords = filterCookieRecords((await context.cookies()).map(cookie => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path,
+      expires: cookie.expires,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite as CookieRecord['sameSite'],
+    })), options.domain);
+
+    const storage: BrowserStorageRecord[] = [];
+    const failedOrigins: Array<{ origin: string; code: string; message: string }> = [];
+    if (!options.cookiesOnly) {
+      const origins = discoverLocalStorageOrigins(snapshotProfileDir, options.domain);
+      for (const origin of origins) {
+        const page = await context.newPage();
+        try {
+          await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+          const localStorage = await page.evaluate(() => ({ ...window.localStorage }));
+          if (Object.keys(localStorage).length) storage.push({ origin, localStorage });
+        } catch (error) {
+          failedOrigins.push({ origin, code: 'LOCAL_STORAGE_PARSE_FAILED', message: error instanceof Error ? error.message : String(error) });
+        } finally {
+          await page.close().catch(() => {});
+        }
+      }
+    }
+    return { cookies: cookieRecords, storage, failedDecrypt: 0, failedOrigins };
+  } catch (error) {
+    throw new SiteflowError('SOURCE_LOCKED', error instanceof Error ? error.message : String(error));
+  } finally {
+    if (context) await context.close().catch(() => {});
+    await fsp.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export function buildBrowserImportReceipt(input: {
+  preview: boolean;
+  source: string;
+  domain?: string;
+  cookies: CookieRecord[];
+  storage: BrowserStorageRecord[];
+  failedDecrypt: number;
+  failedOrigins: Array<{ origin: string; code?: string; message?: string }>;
+  importedCookies?: number;
+  importedStorage?: { origins: number; keys: number };
+  verification?: Record<string, unknown>;
+}): BrowserSessionImportReceipt {
+  const cookieSummary = summarizeCookieRecords(input.cookies, input.domain);
+  const storageOrigins = input.storage.length;
+  const storageKeys = input.storage.reduce((sum, record) => sum + Object.keys(record.localStorage || {}).length, 0);
+  return {
+    ok: true,
+    preview: input.preview,
+    source: input.source,
+    scope: input.domain ? 'domain' : 'all',
+    ...(input.domain ? { domain: input.domain } : {}),
+    cookies: input.preview
+      ? { wouldImport: cookieSummary.count, failedDecrypt: input.failedDecrypt, domains: input.domain ? cookieSummary.domains : cookieSummary.domains.length }
+      : { imported: input.importedCookies ?? cookieSummary.count, failedDecrypt: input.failedDecrypt, domains: input.domain ? cookieSummary.domains : cookieSummary.domains.length },
+    localStorage: input.preview
+      ? { wouldImportOrigins: storageOrigins, wouldImportKeys: storageKeys, failedOrigins: input.failedOrigins.length }
+      : { origins: input.importedStorage?.origins ?? storageOrigins, keys: input.importedStorage?.keys ?? storageKeys, failedOrigins: input.failedOrigins.length },
+    ...(input.verification ? { verification: input.verification } : {}),
+    warnings: input.domain ? [] : ['Imported browser session data may contain sensitive account state.'],
+  };
 }

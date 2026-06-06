@@ -40,10 +40,18 @@ import {
   listCookies,
   exportCookies,
   importCookies,
+  importRuntimeStorage,
   runtimeStorage,
   saveState,
   loadState,
 } from '../daemon/client.js';
+import {
+  buildBrowserImportReceipt,
+  discoverChromiumSources,
+  extractBrowserSession,
+  findBrowserSource,
+  pickDefaultBrowserSource,
+} from '../runtime/browser-session-import.js';
 import { toSiteflowError } from '../shared/errors.js';
 import { browserProfileDir, siteflowHome, profileDir } from '../shared/paths.js';
 import {
@@ -907,6 +915,63 @@ auth
       return importCookies(opts.profile, cookies, local.file, local.domain, Boolean(local.apply));
     });
   });
+auth
+  .command('sources')
+  .description('List importable Chromium browser profiles')
+  .option('--profile-source-root <path>', 'internal test override for Chromium source root')
+  .action(async function () {
+    await run(this, async () => {
+      const local = this.opts<{ profileSourceRoot?: string }>();
+      const roots = local.profileSourceRoot ? { chrome: local.profileSourceRoot } : undefined;
+      return { sources: discoverChromiumSources({ roots }) };
+    });
+  });
+
+auth
+  .command('import-browser')
+  .description('Import cookies and localStorage from a local Chromium browser profile')
+  .option('--source <source>', 'browser source id, for example chrome:Default')
+  .option('--domain <domain>', 'limit import to a domain and its subdomains')
+  .option('--preview', 'preview what would be imported without writing to the Siteflow profile')
+  .option('--cookies-only', 'only import cookies')
+  .option('--no-verify', 'skip post-import verification')
+  .option('--profile-source-root <path>', 'internal test override for Chromium source root')
+  .action(async function () {
+    await run(this, async opts => {
+      const local = this.opts<{
+        source?: string;
+        domain?: string;
+        preview?: boolean;
+        cookiesOnly?: boolean;
+        verify?: boolean;
+        profileSourceRoot?: string;
+      }>();
+      const roots = local.profileSourceRoot ? { chrome: local.profileSourceRoot } : undefined;
+      const sources = discoverChromiumSources({ roots });
+      const source = local.source ? findBrowserSource(sources, local.source) : pickDefaultBrowserSource(sources);
+      const extracted = await extractBrowserSession({ source, domain: local.domain, cookiesOnly: Boolean(local.cookiesOnly) });
+      if (local.preview) {
+        return buildBrowserImportReceipt({ preview: true, source: source.id, domain: local.domain, ...extracted });
+      }
+      const cookieResult = await importCookies(opts.profile, extracted.cookies, source.id, local.domain, true);
+      const storageResult = local.cookiesOnly ? { origins: 0, keys: 0 } : await importRuntimeStorage(opts.profile, extracted.storage);
+      const verification = local.verify === false
+        ? { mode: 'skipped' }
+        : local.domain
+          ? { mode: 'domain', domain: local.domain }
+          : { mode: 'summary-only', cookieCount: cookieResult.count, storageOrigins: storageResult.origins };
+      return buildBrowserImportReceipt({
+        preview: false,
+        source: source.id,
+        domain: local.domain,
+        ...extracted,
+        importedCookies: cookieResult.count,
+        importedStorage: { origins: storageResult.origins, keys: storageResult.keys },
+        verification,
+      });
+    });
+  });
+
 
 const state = program.command('state').description('Save and load page state');
 

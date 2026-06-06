@@ -349,3 +349,26 @@ export interface StorageImportResult {
   keys: number;
   failures: Array<{ origin: string; code: string; message: string }>;
 }
+
+export interface BrowserSessionImportReceipt {
+  ok: boolean;
+  preview: boolean;
+  source: string;
+  scope: 'all' | 'domain';
+  domain?: string;
+  cookies: {
+    imported?: number;
+    wouldImport?: number;
+    failedDecrypt: number;
+    domains: number | string[];
+  };
+  localStorage?: {
+    origins?: number;
+    keys?: number;
+    wouldImportOrigins?: number;
+    wouldImportKeys?: number;
+    failedOrigins: number;
+  };
+  verification?: Record<string, unknown>;
+  warnings: string[];
+}
