@@ -20,6 +20,7 @@ import type {
   BrowserInspectResult,
   BrowserScreenshotResult,
   BrowserSelectOptions,
+  BrowserStorageRecord,
   BrowserTypeOptions,
   BrowserUploadOptions,
   BreakpointInfo,
@@ -37,6 +38,7 @@ import type {
   SavedState,
   ScriptInfo,
   ScriptSearchMatch,
+  StorageImportResult,
   StorageSnapshot,
 } from '../shared/types.js';
 import { SiteflowError } from '../shared/errors.js';
@@ -533,6 +535,31 @@ export class BrowserRuntime {
   async storage(): Promise<StorageSnapshot> {
     const { page } = this.getSelectedPage();
     return readStorageSnapshot(page);
+  }
+
+  async importStorage(records: BrowserStorageRecord[]): Promise<StorageImportResult> {
+    await this.ensureLaunched();
+    const failures: StorageImportResult['failures'] = [];
+    let origins = 0;
+    let keys = 0;
+    for (const record of records) {
+      const entries = Object.entries(record.localStorage || {});
+      if (!entries.length) continue;
+      const page = await this.context!.newPage();
+      try {
+        await page.goto(record.origin, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        await page.evaluate(values => {
+          for (const [key, value] of Object.entries(values)) localStorage.setItem(key, String(value));
+        }, record.localStorage || {});
+        origins += 1;
+        keys += entries.length;
+      } catch (error) {
+        failures.push({ origin: record.origin, code: 'STORAGE_IMPORT_FAILED', message: error instanceof Error ? error.message : String(error) });
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }
+    return { imported: failures.length === 0, origins, keys, failures };
   }
 
   async captureState(includeCookies: boolean): Promise<SavedState> {

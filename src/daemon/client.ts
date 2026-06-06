@@ -12,6 +12,7 @@ import type {
   BrowserInspectResult,
   BrowserScreenshotResult,
   BrowserSelectOptions,
+  BrowserStorageRecord,
   BrowserTypeOptions,
   BrowserUploadOptions,
   BreakpointInfo,
@@ -30,6 +31,7 @@ import type {
   SavedState,
   ScriptInfo,
   ScriptSearchMatch,
+  StorageImportResult,
   StorageSnapshot,
 } from '../shared/types.js';
 import { ensureProfileDirs } from '../shared/paths.js';
@@ -158,8 +160,8 @@ export async function listPages(profile: string): Promise<PageInfo[]> {
   return call(profile, 'GET', '/pages');
 }
 
-export async function reloadPage(profile: string): Promise<PageInfo> {
-  return call(profile, 'POST', '/browser/reload');
+export async function reloadPage(profile: string, pageId?: number): Promise<PageInfo> {
+  return call(profile, 'POST', '/browser/reload', pageId ? { pageId } : {});
 }
 
 export async function browserClick(profile: string, options: BrowserClickOptions): Promise<BrowserActionResult> {
@@ -182,8 +184,9 @@ export async function browserSelect(profile: string, options: BrowserSelectOptio
   return call(profile, 'POST', '/browser/select', options);
 }
 
-export async function browserScreenshot(profile: string, fullPage: boolean): Promise<BrowserScreenshotResult> {
+export async function browserScreenshot(profile: string, fullPage: boolean, pageId?: number): Promise<BrowserScreenshotResult> {
   const params = new URLSearchParams({ fullPage: String(fullPage) });
+  if (pageId) params.set('pageId', String(pageId));
   return call(profile, 'GET', `/browser/screenshot?${params}`);
 }
 
@@ -205,8 +208,9 @@ export async function listConsole(profile: string, limit: number): Promise<Conso
   return call(profile, 'GET', `/console?${params}`);
 }
 
-export async function listNetwork(profile: string, limit: number): Promise<NetworkEntry[]> {
+export async function listNetwork(profile: string, limit: number, pageId?: number): Promise<NetworkEntry[]> {
   const params = new URLSearchParams({ limit: String(limit) });
+  if (pageId) params.set('pageId', String(pageId));
   return call(profile, 'GET', `/network?${params}`);
 }
 
@@ -302,6 +306,10 @@ export async function importCookies(
 
 export async function runtimeStorage(profile: string): Promise<StorageSnapshot> {
   return call(profile, 'GET', '/runtime/storage');
+}
+
+export async function importRuntimeStorage(profile: string, records: BrowserStorageRecord[]): Promise<StorageImportResult> {
+  return call(profile, 'POST', '/runtime/storage/import', { records });
 }
 
 export async function saveState(profile: string, name: string, includeCookies: boolean): Promise<{ name: string; statePath: string; state: SavedState }> {

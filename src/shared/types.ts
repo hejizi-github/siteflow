@@ -337,3 +337,15 @@ export interface TraceReplayStep {
   command: string;
   args: Record<string, unknown>;
 }
+
+export interface BrowserStorageRecord {
+  origin: string;
+  localStorage?: Record<string, unknown>;
+}
+
+export interface StorageImportResult {
+  imported: boolean;
+  origins: number;
+  keys: number;
+  failures: Array<{ origin: string; code: string; message: string }>;
+}

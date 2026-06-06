@@ -5,10 +5,9 @@ import type { AddressInfo } from 'node:net';
 import { BrowserRuntime } from '../runtime/browser-runtime.js';
 import { SiteflowError, toSiteflowError } from '../shared/errors.js';
 import { profileDir } from '../shared/paths.js';
-import type { DaemonInfo, SavedState } from '../shared/types.js';
+import type { BrowserStorageRecord, CookieRecord, DaemonInfo, SavedState } from '../shared/types.js';
 import { clearDaemonInfo, writeDaemonInfo } from './state.js';
 import { appendTraceEvent } from '../traces/artifact-store.js';
-import type { CookieRecord } from '../shared/types.js';
 
 interface ServerOptions {
   profile: string;
@@ -409,6 +408,13 @@ async function route(
   if (method === 'GET' && url.pathname === '/runtime/storage') {
     const storage = await runtime.storage();
     return { status: 200, body: { ok: true, data: storage } };
+  }
+
+  if (method === 'POST' && url.pathname === '/runtime/storage/import') {
+    const body = await readJson(req) as { records?: BrowserStorageRecord[] };
+    if (!Array.isArray(body.records)) throw new SiteflowError('BAD_STORAGE_IMPORT', 'runtime storage import requires records[]');
+    const result = await runtime.importStorage(body.records);
+    return { status: 200, body: { ok: true, data: result } };
   }
 
   if (method === 'POST' && url.pathname === '/state/save') {
