@@ -340,7 +340,7 @@ export interface TraceReplayStep {
 
 export interface BrowserStorageRecord {
   origin: string;
-  localStorage?: Record<string, unknown>;
+  localStorage?: Record<string, string>;
 }
 
 export interface StorageImportResult {

@@ -434,6 +434,13 @@ async function route(
       if (ls !== undefined && (typeof ls !== 'object' || ls === null)) {
         throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} localStorage must be an object when present`);
       }
+      if (ls !== undefined) {
+        for (const [k, v] of Object.entries(ls as Record<string, unknown>)) {
+          if (typeof v !== 'string') {
+            throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} localStorage["${k}"] must be a string`);
+          }
+        }
+      }
     }
     const result = await runtime.importStorage(body.records);
     return { status: 200, body: { ok: true, data: result } };
