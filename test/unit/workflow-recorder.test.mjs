@@ -123,6 +123,42 @@ test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
   assert.deepEqual(workflow.steps.map((step) => step.type), ['open', 'click', 'type', 'select', 'scroll', 'wait', 'screenshot']);
 });
 
+test('selectPageOption uses native selectOption with value fallback for select elements', async () => {
+  const { selectPageOption } = await import('../../dist/runtime/page-actions.js');
+  const calls = [];
+  let selectedText = 'United States';
+  const nativeSelect = {
+    nth: () => nativeSelect,
+    async innerText() {
+      return selectedText;
+    },
+    async evaluate(callback) {
+      return callback({ tagName: 'SELECT' });
+    },
+    async selectOption(option) {
+      calls.push(option);
+      if (option.label) throw new Error('No option found for label');
+      selectedText = option.value;
+    },
+  };
+  const page = {
+    locator(selector) {
+      assert.equal(selector, '#country');
+      return nativeSelect;
+    },
+    waitForTimeout: async () => {},
+  };
+
+  const target = await selectPageOption(page, {
+    selector: '#country',
+    option: 'CA',
+    timeoutMs: 50,
+  });
+
+  assert.deepEqual(target, { selector: '#country', exact: undefined });
+  assert.deepEqual(calls, [{ label: 'CA' }, { value: 'CA' }]);
+});
+
 test('validateWorkflow preserves optional workflow fields and defaults variables/evidence', async () => {
   const { validateWorkflow } = await validation();
   const workflow = validateWorkflow({
@@ -2137,6 +2173,30 @@ test('clicks on sensitive input controls are recorded unsupported instead of rep
   assert.equal(event.type, 'unsupported');
   assert.equal(event.value, undefined);
   assert.equal(event.target.structural.selector, 'input[name="email-control"]');
+});
+
+test('benign editable field names containing sensitive substrings are not recorded as sensitive', async () => {
+  const cases = ['headphone-model', 'microphone-name', 'scorecard-title'];
+  for (const name of cases) {
+    const input = Object.assign(new FakeInputElement(), fakeRecordedElement({
+      localName: 'input',
+      tagName: 'INPUT',
+      type: 'text',
+      value: 'public value',
+      getAttribute: (attribute) => {
+        if (attribute === 'type') return 'text';
+        if (attribute === 'name') return name;
+        return undefined;
+      },
+    }));
+
+    const event = await recordFixtureEvent(input, 'input');
+
+    assert.equal(event.control, 'input');
+    assert.notEqual(event.sensitive, true);
+    assert.equal(event.value, 'public value');
+    assert.equal(event.target.structural.selector, `input[name="${name}"]`);
+  }
 });
 
 test('clicks on non-editable sensitive-looking controls are recorded as clicks', async () => {

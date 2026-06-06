@@ -22,7 +22,7 @@ export interface RecorderSession {
 }
 
 const MUTATING_TEXT = /\b(submit|send|publish|save|post|upload)\b/i;
-const SENSITIVE_FIELD = /(?:password|token|secret|api[\s_-]*key|\bkey\b|otp|one[\s_-]*time[\s_-]*code|card|cvv|e-?mail|phone|\btel(?:ephone)?\b)/i;
+const SENSITIVE_FIELD = /(?:^|[^a-z0-9])(?:password|token|secret|api[\s_-]*key|key|otp|one[\s_-]*time[\s_-]*code|card|cvv|e-?mail|phone|tel(?:ephone)?)(?=$|[^a-z0-9])/i;
 
 function hasSensitiveMarker(value: string | undefined): boolean {
   return typeof value === 'string' && SENSITIVE_FIELD.test(value);
@@ -355,7 +355,7 @@ export function recorderInjectionSource(): string {
     }
   }
 
-  const SENSITIVE_FIELD = /(?:password|token|secret|api[\\s_-]*key|\\bkey\\b|otp|one[\\s_-]*time[\\s_-]*code|card|cvv|e-?mail|phone|\\btel(?:ephone)?\\b)/i;
+  const SENSITIVE_FIELD = /(?:^|[^a-z0-9])(?:password|token|secret|api[\\s_-]*key|key|otp|one[\\s_-]*time[\\s_-]*code|card|cvv|e-?mail|phone|tel(?:ephone)?)(?=$|[^a-z0-9])/i;
   const MUTATING_TEXT = /\\b(submit|send|publish|save|post|upload)\\b/i;
 
   function elementFor(rawTarget) {

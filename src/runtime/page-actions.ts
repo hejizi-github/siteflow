@@ -62,8 +62,12 @@ export async function selectPageOption(page: Page, options: BrowserSelectOptions
     ? { selector: options.selector, exact: options.exact }
     : { text: options.comboboxText, exact: options.exact };
   const combo = locatorForTarget(page, target);
-  await combo.click({ timeout, force: options.force });
-  await clickVisibleOption(page, options, timeout);
+  if (await isNativeSelectLocator(combo)) {
+    await selectNativeOption(combo, options, timeout);
+  } else {
+    await combo.click({ timeout, force: options.force });
+    await clickVisibleOption(page, options, timeout);
+  }
   if (options.verify !== false) {
     const changed = await waitForSelectPostcondition(page, options, before, timeout);
     if (!changed) {
@@ -120,12 +124,40 @@ async function assertPostconditions(page: Page, options: BrowserClickOptions, ti
   }
 }
 
+async function isNativeSelectLocator(locator: Locator): Promise<boolean> {
+  try {
+    return await locator.evaluate((element) => element.tagName.toLowerCase() === 'select' || element instanceof HTMLSelectElement);
+  } catch {
+    return false;
+  }
+}
+
+async function selectNativeOption(locator: Locator, options: BrowserSelectOptions, timeout: number): Promise<void> {
+  try {
+    await locator.selectOption({ label: options.option }, { timeout });
+  } catch {
+    await locator.selectOption({ value: options.option }, { timeout });
+  }
+}
+
 async function visibleTextForSelectTarget(page: Page, options: BrowserSelectOptions): Promise<string | null> {
   const target = options.selector
     ? { selector: options.selector, exact: options.exact }
     : { text: options.comboboxText, exact: options.exact };
+  const locator = locatorForTarget(page, target);
   try {
-    const text = await locatorForTarget(page, target).innerText({ timeout: 1000 });
+    const nativeText = await locator.evaluate((element) => {
+      if (element.tagName.toLowerCase() !== 'select') return null;
+      const select = element as HTMLSelectElement;
+      const option = select.selectedOptions[0];
+      return option?.label || option?.innerText || option?.textContent || select.value || null;
+    });
+    if (typeof nativeText === 'string') return nativeText.replace(/\s+/g, ' ').trim();
+  } catch {
+    // Non-native comboboxes may not support DOM evaluation; fall back to visible text.
+  }
+  try {
+    const text = await locator.innerText({ timeout: 1000 });
     return text.replace(/\s+/g, ' ').trim();
   } catch {
     return null;
