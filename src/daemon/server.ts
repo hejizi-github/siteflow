@@ -18,13 +18,13 @@ interface JsonResponse {
   body: unknown;
 }
 
-function readJson(req: http.IncomingMessage): Promise<unknown> {
+function readJson(req: http.IncomingMessage, maxSize = 1024 * 1024): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let raw = '';
     req.setEncoding('utf-8');
     req.on('data', chunk => {
       raw += chunk;
-      if (raw.length > 1024 * 1024) {
+      if (raw.length > maxSize) {
         reject(new SiteflowError('REQUEST_TOO_LARGE', 'Request body is too large'));
         req.destroy();
       }
@@ -411,7 +411,7 @@ async function route(
   }
 
   if (method === 'POST' && url.pathname === '/runtime/storage/import') {
-    const body = await readJson(req) as { records?: BrowserStorageRecord[] };
+    const body = await readJson(req, 50 * 1024 * 1024) as { records?: BrowserStorageRecord[] };
     if (!Array.isArray(body.records)) throw new SiteflowError('BAD_STORAGE_IMPORT', 'runtime storage import requires records[]');
     for (let i = 0; i < body.records.length; i++) {
       const record = body.records[i];
