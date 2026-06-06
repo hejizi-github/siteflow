@@ -421,6 +421,15 @@ async function route(
       if (typeof (record as unknown as Record<string, unknown>).origin !== 'string' || (record as unknown as Record<string, unknown>).origin === '') {
         throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} must have a non-empty origin string`);
       }
+      let parsed: URL;
+      try {
+        parsed = new URL(String((record as unknown as Record<string, unknown>).origin));
+      } catch {
+        throw new SiteflowError('BAD_STORAGE_IMPORT', 'Invalid origin URL');
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new SiteflowError('BAD_STORAGE_IMPORT', 'Invalid origin URL');
+      }
       const ls = (record as unknown as Record<string, unknown>).localStorage;
       if (ls !== undefined && (typeof ls !== 'object' || ls === null)) {
         throw new SiteflowError('BAD_STORAGE_IMPORT', `record at index ${i} localStorage must be an object when present`);
