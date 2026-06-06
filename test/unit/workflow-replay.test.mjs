@@ -74,6 +74,59 @@ test('runWorkflow dry-run reports steps without executing actions', async () => 
   assert.equal(result.steps[1].ok, true);
 });
 
+test('runWorkflow open receipt includes the driver page urlAfter', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const result = await runWorkflow({
+    open: async () => ({ id: 1, url: 'https://example.com/after', title: 'After redirect', selected: true }),
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => ({ bytes: 0 }),
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/start' },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, true);
+  assert.equal(result.steps[0].urlAfter, 'https://example.com/after');
+});
+
+test('runWorkflow maps placeholder select targets through target matcher', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const calls = [];
+  const result = await runWorkflow({
+    open: async () => ({ id: 1, url: 'https://example.com/', title: 'Example', selected: true }),
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async (options) => {
+      calls.push(options);
+      return { action: 'select', target: 'Country', url: 'https://example.com/', page: { id: 1, url: 'https://example.com/', title: 'Example', selected: true } };
+    },
+    screenshot: async () => ({ bytes: 0 }),
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'select', target: { semantic: { placeholder: 'Choose country' }, structural: { selector: 'select[name="country"]' }, confidence: 'high' }, option: 'Canada' },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{ selector: '[placeholder="Choose country"]', option: 'Canada', exact: true }]);
+  assert.equal(result.steps[0].targetMatchedBy, 'semantic.placeholder');
+});
+
 test('runWorkflow executes replay steps with recorded target options', async () => {
   const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
   const calls = [];

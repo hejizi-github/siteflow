@@ -97,23 +97,20 @@ function typeOptionsFromStep(step: TypeWorkflowStep): BrowserTypeOptions {
 }
 
 function selectOptionsFromStep(step: SelectWorkflowStep): BrowserSelectOptions {
-  const semantic = step.target.semantic;
-  const selector = step.target.structural?.selector;
+  const target = browserTargetFromRecordedTarget(step.target);
   return {
-    ...(selector === undefined ? {} : { selector }),
-    ...(selector === undefined && semantic?.aria !== undefined ? { comboboxText: semantic.aria } : {}),
-    ...(selector === undefined && semantic?.aria === undefined && semantic?.text !== undefined ? { comboboxText: semantic.text } : {}),
-    ...(selector === undefined && semantic?.aria === undefined && semantic?.text === undefined && semantic?.label !== undefined ? { comboboxText: semantic.label } : {}),
+    ...(target.selector === undefined ? {} : { selector: target.selector }),
+    ...(target.selector !== undefined || (target.text ?? target.aria) === undefined ? {} : { comboboxText: target.text ?? target.aria }),
     option: step.option,
-    exact: true,
+    ...(target.exact === undefined ? {} : { exact: target.exact }),
   };
 }
 
 async function runStep(driver: ReplayDriver, step: WorkflowStep): Promise<ReplayStepReceipt> {
   switch (step.type) {
     case 'open':
-      await driver.open(step.url);
-      return successReceipt(step);
+      const page = await driver.open(step.url);
+      return { ...successReceipt(step), urlAfter: page.url };
     case 'click':
       await driver.click(clickOptionsFromStep(step));
       return successReceipt(step, step.target);
