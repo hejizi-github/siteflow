@@ -1141,6 +1141,31 @@ test('BrowserRuntime startRecorder rejects when recorder is already active', asy
   assert.equal(runtime.recorderSession.out, '/tmp/siteflow-active-recorder.json');
 });
 
+test('BrowserRuntime stopRecorder clears session when serialization fails after stop', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-stop-fail-'));
+  try {
+    const runtime = new BrowserRuntime('unit-recorder-stop-fail');
+    runtime.recorderSession = {
+      id: 'session-stop-fail',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out: temp,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
+
+    await assert.rejects(
+      () => runtime.stopRecorder(),
+      error => error?.code === 'EISDIR' || error?.code === 'EACCES' || error?.code === 'EPERM',
+    );
+    assert.equal(runtime.recorderSession, null);
+    assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
   const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-session-isolation-'));

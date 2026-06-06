@@ -433,9 +433,10 @@ export class BrowserRuntime {
   }
 
   async startRecorder(options: RecorderStartOptions): Promise<RecorderStatus> {
-    if (this.recorderSession) {
+    if (this.recorderStatus().recording) {
       throw new SiteflowError('RECORDER_ALREADY_RUNNING', 'A recorder session is already running. Stop it before starting another recorder.');
     }
+    this.recorderSession = null;
 
     await this.ensureLaunched();
     let resolved: { pageId: number; page: Page };
@@ -461,10 +462,13 @@ export class BrowserRuntime {
   }
 
   async stopRecorder(): Promise<RecorderStopResult> {
-    if (!this.recorderSession) throw new SiteflowError('RECORDER_NOT_RUNNING', 'No recorder session is running.');
-    const result = await stopRecorderSession(this.recorderSession);
-    this.recorderSession = null;
-    return result;
+    const session = this.recorderSession;
+    if (!session) throw new SiteflowError('RECORDER_NOT_RUNNING', 'No recorder session is running.');
+    try {
+      return await stopRecorderSession(session);
+    } finally {
+      this.recorderSession = null;
+    }
   }
 
   async runReplayWorkflow(workflowValue: unknown, options: ReplayRunOptions): Promise<ReplayRunResult> {
