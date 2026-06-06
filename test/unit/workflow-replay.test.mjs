@@ -104,6 +104,49 @@ test('runWorkflow dry-run ignores stopBeforeMutating and reports all steps ok', 
   assert.deepEqual(result.steps.map((step) => step.ok), [true, true, true]);
 });
 
+test('runWorkflow dry-run validates conditional wait driver support', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const driver = {
+    open: async () => { throw new Error('open should not run'); },
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => { throw new Error('screenshot should not run'); },
+    scroll: async () => { throw new Error('scroll should not run'); },
+  };
+
+  const plainWaitResult = await runWorkflow(driver, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'plain-wait', type: 'wait', ms: 250 },
+    ],
+    evidence: {},
+  }, { dryRun: true });
+
+  const conditionalWaitResult = await runWorkflow(driver, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'conditional-wait', type: 'wait', selector: '#ready' },
+      { id: 'after-wait', type: 'screenshot' },
+    ],
+    evidence: {},
+  }, { dryRun: true });
+
+  assert.equal(plainWaitResult.ok, true);
+  assert.deepEqual(plainWaitResult.steps, [{ stepId: 'plain-wait', type: 'wait', ok: true }]);
+  assert.equal(conditionalWaitResult.ok, false);
+  assert.equal(conditionalWaitResult.steps.length, 1);
+  assert.equal(conditionalWaitResult.steps[0].error.code, 'REPLAY_WAIT_UNSUPPORTED');
+});
+
 test('runWorkflow executes scroll steps with recorded deltas', async () => {
   const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
   const calls = [];

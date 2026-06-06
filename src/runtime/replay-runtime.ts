@@ -165,7 +165,11 @@ export async function runWorkflow(
 
   for (const step of validated.steps) {
     if (options.dryRun === true) {
-      receipts.push(successReceipt(step, step.target));
+      const receipt = step.type === 'wait' && waitHasCondition(step) && driver.waitFor === undefined
+        ? failedReceipt(step, new SiteflowError('REPLAY_WAIT_UNSUPPORTED', 'Replay driver does not support conditional waits.'))
+        : successReceipt(step, step.target);
+      receipts.push(receipt);
+      if (!receipt.ok) break;
       continue;
     }
 
