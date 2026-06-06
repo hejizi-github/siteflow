@@ -2323,6 +2323,56 @@ test('form-associated Enter keydown records mutating and normalizes to mutating 
   ]);
 });
 
+test('normalizeRecordedEvents skips mutating submit click after Enter press submit', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const inputTarget = {
+    semantic: { label: 'Search' },
+    structural: { selector: 'input[name="q"]' },
+    confidence: 'high',
+  };
+  const submitTarget = {
+    semantic: { text: 'Submit' },
+    structural: { selector: 'button[type="submit"]' },
+    confidence: 'high',
+  };
+
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/form',
+    events: [
+      {
+        ts: '2026-06-05T00:00:01.000Z',
+        type: 'keydown',
+        control: 'input',
+        key: 'Enter',
+        target: inputTarget,
+        mutating: true,
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+      {
+        ts: '2026-06-05T00:00:01.010Z',
+        type: 'click',
+        target: submitTarget,
+        url: 'https://example.test/form',
+        title: 'Form',
+      },
+    ],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    {
+      id: 'step-2',
+      type: 'type',
+      target: inputTarget,
+      value: '',
+      clear: false,
+      pressEnter: true,
+      mutating: true,
+    },
+  ]);
+});
+
 test('geometry-only Enter keydown is unsupported and not normalized to type', async () => {
   const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-enter-unsupported-'));

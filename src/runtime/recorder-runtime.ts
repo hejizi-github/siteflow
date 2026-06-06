@@ -130,6 +130,11 @@ function removePreviousClickIfSameTarget(steps: WorkflowStep[], target: Recorded
   }
 }
 
+function isMutatingEnterPressStep(step: WorkflowStep | undefined): boolean {
+  return step?.type === 'type' && step.pressEnter === true && step.mutating === true;
+}
+
+
 function finiteNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -258,11 +263,15 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
         unsupportedEvents += 1;
         continue;
       }
+      const mutating = event.mutating === true || isMutatingTarget(event.target);
+      if (mutating && isMutatingEnterPressStep(steps[steps.length - 1])) {
+        continue;
+      }
       const step: Extract<WorkflowStep, { type: 'click' }> = {
         id: nextStepId(steps),
         type: 'click',
         target: event.target,
-        ...(event.mutating === true || isMutatingTarget(event.target) ? { mutating: true } : {}),
+        ...(mutating ? { mutating: true } : {}),
       };
       steps.push(step);
       continue;
