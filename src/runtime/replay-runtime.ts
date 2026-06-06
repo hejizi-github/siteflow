@@ -33,6 +33,7 @@ export interface ReplayDriver {
   type(options: BrowserTypeOptions): Promise<BrowserActionResult>;
   select(options: BrowserSelectOptions): Promise<BrowserActionResult>;
   screenshot(fullPage: boolean): Promise<BrowserScreenshotResult | { bytes: number }>;
+  scroll(deltaX: number, deltaY: number): Promise<void>;
 }
 
 function successReceipt(step: WorkflowStep, target?: RecordedTarget): ReplayStepReceipt {
@@ -127,7 +128,8 @@ async function runStep(driver: ReplayDriver, step: WorkflowStep): Promise<Replay
       await driver.screenshot(step.fullPage !== false);
       return successReceipt(step);
     case 'scroll':
-      throw new SiteflowError('UNSUPPORTED_WORKFLOW_STEP', 'Scroll replay requires a driver scroll capability.');
+      await driver.scroll(step.deltaX, step.deltaY);
+      return successReceipt(step);
   }
 }
 

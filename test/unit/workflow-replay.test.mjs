@@ -56,6 +56,7 @@ test('runWorkflow dry-run reports steps without executing actions', async () => 
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -65,13 +66,43 @@ test('runWorkflow dry-run reports steps without executing actions', async () => 
     steps: [
       { id: 'step-1', type: 'open', url: 'https://example.com/' },
       { id: 'step-2', type: 'click', target: { semantic: { text: 'Continue' }, confidence: 'high' } },
+      { id: 'step-3', type: 'scroll', deltaX: 12, deltaY: 34 },
     ],
     evidence: {},
   }, { dryRun: true });
 
   assert.equal(result.ok, true);
-  assert.equal(result.steps.length, 2);
-  assert.equal(result.steps[1].ok, true);
+  assert.equal(result.steps.length, 3);
+  assert.equal(result.steps[2].ok, true);
+});
+
+test('runWorkflow executes scroll steps with recorded deltas', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const calls = [];
+  const result = await runWorkflow({
+    open: async () => ({ id: 1, url: 'https://example.com/', title: 'Example', selected: true }),
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => ({ bytes: 0 }),
+    scroll: async (deltaX, deltaY) => {
+      calls.push([deltaX, deltaY]);
+    },
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'scroll', deltaX: -12, deltaY: 240 },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [[-12, 240]]);
+  assert.deepEqual(result.steps, [{ stepId: 'step-1', type: 'scroll', ok: true }]);
 });
 
 test('runWorkflow open receipt includes the driver page urlAfter', async () => {
@@ -82,6 +113,7 @@ test('runWorkflow open receipt includes the driver page urlAfter', async () => {
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -110,6 +142,7 @@ test('runWorkflow maps placeholder select targets through target matcher', async
       return { action: 'select', target: 'Country', url: 'https://example.com/', page: { id: 1, url: 'https://example.com/', title: 'Example', selected: true } };
     },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -151,6 +184,9 @@ test('runWorkflow executes replay steps with recorded target options', async () 
       calls.push(['screenshot', fullPage]);
       return { bytes: 42 };
     },
+    scroll: async (deltaX, deltaY) => {
+      calls.push(['scroll', deltaX, deltaY]);
+    },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -164,6 +200,7 @@ test('runWorkflow executes replay steps with recorded target options', async () 
       { id: 'step-4', type: 'select', target: { semantic: { aria: 'Plan' }, confidence: 'high' }, option: 'Pro' },
       { id: 'step-5', type: 'screenshot', fullPage: false },
       { id: 'step-6', type: 'screenshot' },
+      { id: 'step-7', type: 'scroll', deltaX: 0, deltaY: 500 },
     ],
     evidence: {},
   }, {});
@@ -176,6 +213,7 @@ test('runWorkflow executes replay steps with recorded target options', async () 
     ['select', { comboboxText: 'Plan', option: 'Pro', exact: true }],
     ['screenshot', false],
     ['screenshot', true],
+    ['scroll', 0, 500],
   ]);
   assert.equal(result.steps[1].targetMatchedBy, 'semantic.text');
 });
@@ -192,6 +230,7 @@ test('runWorkflow stops before mutating step when requested', async () => {
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -221,6 +260,7 @@ test('runWorkflow records replay failures without throwing', async () => {
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -248,6 +288,7 @@ test('runWorkflow preserves SiteflowError codes in replay receipts', async () =>
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
@@ -275,6 +316,7 @@ test('runWorkflow wait defaults to one second', async () => {
     type: async () => { throw new Error('type should not run'); },
     select: async () => { throw new Error('select should not run'); },
     screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
   }, {
     version: 1,
     kind: 'siteflow.workflow',
