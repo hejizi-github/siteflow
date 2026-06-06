@@ -677,7 +677,7 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
     pageId,
     startedAt: new Date().toISOString(),
     out: options.out,
-    startUrl: options.url ?? page.url(),
+    startUrl: page.url(),
     events: [],
   };
 
@@ -694,6 +694,7 @@ export async function startRecorderSession(page: Page, pageId: number, options: 
   await page.evaluate(source);
   if (options.url) await page.goto(options.url);
   await page.evaluate(() => (globalThis.window as typeof globalThis.window & { __siteflowResetRecorder?: () => unknown }).__siteflowResetRecorder?.());
+  session.startUrl = page.url();
   activeRecorderSessions.set(page, session);
   recorderSessionPages.set(session, page);
 

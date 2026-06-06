@@ -1121,6 +1121,33 @@ test('startRecorderSession clears previous active session before new session nav
   }
 });
 
+test('startRecorderSession uses settled page URL after requested navigation', async () => {
+  const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-settled-url-'));
+  try {
+    const page = {
+      currentUrl: 'https://example.test/before',
+      async exposeBinding() {},
+      async addInitScript() {},
+      async evaluate() {},
+      async goto(url) {
+        assert.equal(url, 'https://example.test/start');
+        this.currentUrl = 'https://example.test/settled';
+      },
+      url() {
+        return this.currentUrl;
+      },
+    };
+
+    const session = await startRecorderSession(page, 1, { out: path.join(temp, 'workflow.json'), url: 'https://example.test/start' });
+
+    assert.equal(session.startUrl, 'https://example.test/settled');
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
 
 test('recorded contenteditable input with semantic label normalizes to type step with visible text value', async () => {
   const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
