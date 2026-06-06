@@ -131,7 +131,13 @@ test('records, replays, and exports a browser fixture workflow', async () => {
     assert.equal(exportResult.out, scriptPath);
     assert.equal(existsSync(scriptPath), true);
     const script = readFileSync(scriptPath, 'utf8');
-    assert.match(script, /siteflow --json browser/);
+    assert.match(script, /siteflow --json browser open/);
+    assert.ok(script.includes(pathToFileURL(fixturePath).href), 'exported script missing fixture open URL');
+    assert.match(script, /siteflow --json browser type/);
+    assert.ok(script.includes('Alice'), 'exported script missing recorded type value');
+    assert.match(script, /siteflow --json browser select/);
+    assert.ok(script.includes('Advanced'), 'exported script missing recorded select option');
+    assert.match(script, /siteflow --json browser click/);
   } finally {
     runSiteflow(['daemon', 'stop'], { siteflowHome, allowFailure: true, timeout: 10_000 });
     await rm(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
