@@ -1,0 +1,170 @@
+import { setTimeout as sleep } from 'node:timers/promises';
+
+import { SiteflowError } from '../shared/errors.js';
+import type {
+  BrowserActionResult,
+  BrowserClickOptions,
+  BrowserScreenshotResult,
+  BrowserSelectOptions,
+  BrowserTypeOptions,
+  PageInfo,
+} from '../shared/types.js';
+import {
+  browserTargetFromRecordedTarget,
+  clickOptionsFromRecordedTarget,
+  matchedByForRecordedTarget,
+} from './target-matcher.js';
+import { validateWorkflow } from './workflow-validation.js';
+import type {
+  ClickWorkflowStep,
+  RecordedTarget,
+  ReplayRunOptions,
+  ReplayRunResult,
+  ReplayStepReceipt,
+  SelectWorkflowStep,
+  SiteflowWorkflow,
+  TypeWorkflowStep,
+  WorkflowStep,
+} from './workflow-types.js';
+
+export interface ReplayDriver {
+  open(url: string): Promise<PageInfo>;
+  click(options: BrowserClickOptions): Promise<BrowserActionResult>;
+  type(options: BrowserTypeOptions): Promise<BrowserActionResult>;
+  select(options: BrowserSelectOptions): Promise<BrowserActionResult>;
+  screenshot(fullPage: boolean): Promise<BrowserScreenshotResult | { bytes: number }>;
+}
+
+function successReceipt(step: WorkflowStep, target?: RecordedTarget): ReplayStepReceipt {
+  return {
+    stepId: step.id,
+    type: step.type,
+    ok: true,
+    ...(target === undefined ? {} : { targetMatchedBy: matchedByForRecordedTarget(target) }),
+  };
+}
+
+function failedReceipt(step: WorkflowStep, error: unknown): ReplayStepReceipt {
+  if (error instanceof SiteflowError) {
+    return {
+      stepId: step.id,
+      type: step.type,
+      ok: false,
+      error: {
+        code: error.code,
+        message: error.message,
+      },
+    };
+  }
+
+  return {
+    stepId: step.id,
+    type: step.type,
+    ok: false,
+    error: {
+      code: 'REPLAY_STEP_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
+function mutatingStopReceipt(step: WorkflowStep): ReplayStepReceipt {
+  return {
+    stepId: step.id,
+    type: step.type,
+    ok: false,
+    error: {
+      code: 'STOPPED_BEFORE_MUTATING',
+      message: `Stopped before mutating workflow step ${step.id}.`,
+    },
+  };
+}
+
+function clickOptionsFromStep(step: ClickWorkflowStep): BrowserClickOptions {
+  return {
+    ...clickOptionsFromRecordedTarget(step.target),
+    ...(step.button === undefined ? {} : { button: step.button }),
+  };
+}
+
+function typeOptionsFromStep(step: TypeWorkflowStep): BrowserTypeOptions {
+  return {
+    ...browserTargetFromRecordedTarget(step.target),
+    value: step.value,
+    ...(step.clear === undefined ? {} : { clear: step.clear }),
+    ...(step.pressEnter === undefined ? {} : { pressEnter: step.pressEnter }),
+  };
+}
+
+function selectOptionsFromStep(step: SelectWorkflowStep): BrowserSelectOptions {
+  const semantic = step.target.semantic;
+  const selector = step.target.structural?.selector;
+  return {
+    ...(selector === undefined ? {} : { selector }),
+    ...(selector === undefined && semantic?.aria !== undefined ? { comboboxText: semantic.aria } : {}),
+    ...(selector === undefined && semantic?.aria === undefined && semantic?.text !== undefined ? { comboboxText: semantic.text } : {}),
+    ...(selector === undefined && semantic?.aria === undefined && semantic?.text === undefined && semantic?.label !== undefined ? { comboboxText: semantic.label } : {}),
+    option: step.option,
+    exact: true,
+  };
+}
+
+async function runStep(driver: ReplayDriver, step: WorkflowStep): Promise<ReplayStepReceipt> {
+  switch (step.type) {
+    case 'open':
+      await driver.open(step.url);
+      return successReceipt(step);
+    case 'click':
+      await driver.click(clickOptionsFromStep(step));
+      return successReceipt(step, step.target);
+    case 'type':
+      await driver.type(typeOptionsFromStep(step));
+      return successReceipt(step, step.target);
+    case 'select':
+      await driver.select(selectOptionsFromStep(step));
+      return successReceipt(step, step.target);
+    case 'wait':
+      await sleep(step.ms ?? 1000);
+      return successReceipt(step);
+    case 'screenshot':
+      await driver.screenshot(step.fullPage !== false);
+      return successReceipt(step);
+    case 'scroll':
+      throw new SiteflowError('UNSUPPORTED_WORKFLOW_STEP', 'Scroll replay requires a driver scroll capability.');
+  }
+}
+
+export async function runWorkflow(
+  driver: ReplayDriver,
+  workflow: SiteflowWorkflow,
+  options: ReplayRunOptions = {},
+): Promise<ReplayRunResult> {
+  const validated = validateWorkflow(workflow);
+  const receipts: ReplayStepReceipt[] = [];
+
+  for (const step of validated.steps) {
+    if (options.stopBeforeMutating === true && step.mutating === true) {
+      receipts.push(mutatingStopReceipt(step));
+      break;
+    }
+
+    if (options.dryRun === true) {
+      receipts.push(successReceipt(step, step.target));
+      continue;
+    }
+
+    const receipt = await runStep(driver, step).catch((error: unknown) => failedReceipt(step, error));
+    receipts.push(receipt);
+    if (!receipt.ok) break;
+  }
+
+  return {
+    ok: receipts.every((receipt) => receipt.ok),
+    workflow: {
+      version: 1,
+      steps: validated.steps.length,
+      startUrl: validated.startUrl,
+    },
+    steps: receipts,
+  };
+}
