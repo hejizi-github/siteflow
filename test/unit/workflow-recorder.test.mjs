@@ -493,6 +493,60 @@ test('validateWorkflow preserves valid optional step fields', async () => {
   assert.deepEqual(workflow.steps, steps);
 });
 
+test('validateWorkflow preserves target geometry with valid x y', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow(validWorkflow({
+    steps: [{
+      id: 'step-1',
+      type: 'click',
+      target: { geometry: { x: 100, y: 200 }, confidence: 'medium' },
+    }],
+  }));
+
+  assert.deepEqual(workflow.steps[0].target.geometry, { x: 100, y: 200 });
+});
+
+test('validateWorkflow preserves full target geometry with width height', async () => {
+  const { validateWorkflow } = await validation();
+  const workflow = validateWorkflow(validWorkflow({
+    steps: [{
+      id: 'step-1',
+      type: 'click',
+      target: { geometry: { x: 10, y: 20, width: 30, height: 40 }, confidence: 'medium' },
+    }],
+  }));
+
+  assert.deepEqual(workflow.steps[0].target.geometry, { x: 10, y: 20, width: 30, height: 40 });
+});
+
+test('validateWorkflow rejects geometry with missing required x', async () => {
+  const { validateWorkflow } = await validation();
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{
+        id: 'step-1',
+        type: 'click',
+        target: { geometry: { y: 200 }, confidence: 'medium' },
+      }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
+test('validateWorkflow rejects geometry with non-finite y', async () => {
+  const { validateWorkflow } = await validation();
+  assert.throws(
+    () => validateWorkflow(validWorkflow({
+      steps: [{
+        id: 'step-1',
+        type: 'click',
+        target: { geometry: { x: 100, y: Number.NaN }, confidence: 'medium' },
+      }],
+    })),
+    /BAD_WORKFLOW/,
+  );
+});
+
 test('exportWorkflowCli preserves variables and labels mutating steps', async () => {
   const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
   const script = exportWorkflowCli({
@@ -821,6 +875,56 @@ test('exportWorkflowCli preserves conditional wait semantics', async () => {
   assert.match(script, /Date\.now\(\) \+ 1000/);
   assert.match(script, /window\.location\.href\.includes\("\/done"\)/);
   assert.doesNotMatch(script, /setTimeout\(resolve, 1000\)/);
+});
+
+test('exportWorkflowCli exports aria-only click target with --aria', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'click', target: { semantic: { aria: 'Dismiss' }, confidence: 'high' } },
+    ],
+  }));
+
+  assert.match(script, /siteflow --json browser click.*--aria 'Dismiss'/);
+});
+
+test('exportWorkflowCli exports aria-only type target with --aria', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'type', target: { semantic: { aria: 'Tagline' }, confidence: 'high' }, value: 'hello' },
+    ],
+  }));
+
+  assert.match(script, /siteflow --json browser type.*--aria 'Tagline'.*--value 'hello'/);
+});
+
+test('exportWorkflowCli includes --button for non-left click buttons', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const rightScript = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'click', button: 'right', target: { semantic: { text: 'Item' }, confidence: 'high' } },
+    ],
+  }));
+  const middleScript = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'click', button: 'middle', target: { semantic: { text: 'Item' }, confidence: 'high' } },
+    ],
+  }));
+
+  assert.match(rightScript, /--button right/);
+  assert.match(middleScript, /--button middle/);
+});
+
+test('exportWorkflowCli omits --button for default left click', async () => {
+  const { exportWorkflowCli } = await import('../../dist/runtime/workflow-export.js');
+  const script = exportWorkflowCli(validWorkflow({
+    steps: [
+      { id: 'step-1', type: 'click', button: 'left', target: { semantic: { text: 'OK' }, confidence: 'high' } },
+    ],
+  }));
+
+  assert.doesNotMatch(script, /--button/);
 });
 
 test('normalizeRecordedEvents merges repeated input events', async () => {
@@ -2842,4 +2946,29 @@ test('workflow command modules are importable after CLI wiring', async () => {
   assert.equal(typeof client.runReplayWorkflow, 'function');
   assert.equal(typeof client.runReplayWorkflowFile, 'function');
   assert.equal(typeof client.exportReplayCli, 'function');
+});
+
+test('normalizeRecordedEvents returns only open step for empty events', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/',
+    events: [],
+  });
+
+  assert.deepEqual(steps, [
+    { id: 'step-1', type: 'open', url: 'https://example.test/' },
+  ]);
+});
+
+test('normalizeRecordedEvents skips unsupported event types', async () => {
+  const { normalizeRecordedEvents } = await import('../../dist/runtime/recorder-runtime.js');
+  const steps = normalizeRecordedEvents({
+    startUrl: 'https://example.test/',
+    events: [
+      { ts: '2026-06-06T00:00:00.000Z', type: 'unsupported', url: 'https://example.test/', title: 'Test' },
+    ],
+  });
+
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0].type, 'open');
 });
