@@ -1166,6 +1166,74 @@ test('BrowserRuntime stopRecorder clears session when serialization fails after 
   }
 });
 
+test('BrowserRuntime close clears active recorder session on context reset', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const runtime = new BrowserRuntime('unit-recorder-reset');
+  runtime.recorderSession = {
+    id: 'session-reset',
+    pageId: 1,
+    startedAt: '2026-06-06T00:00:00.000Z',
+    out: '/tmp/siteflow-reset-recorder.json',
+    startUrl: 'https://example.test/start',
+    events: [],
+  };
+
+  await runtime.close();
+
+  assert.equal(runtime.recorderSession, null);
+  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+});
+
+test('BrowserRuntime attach clears active recorder before adopting attached context', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const runtime = new BrowserRuntime('unit-recorder-attach-reset');
+  runtime.recorderSession = {
+    id: 'session-attach-reset',
+    pageId: 1,
+    startedAt: '2026-06-06T00:00:00.000Z',
+    out: '/tmp/siteflow-attach-reset-recorder.json',
+    startUrl: 'https://example.test/start',
+    events: [],
+  };
+
+  const result = await runtime.attach('http://127.0.0.1:9222', async () => ({
+    browser: { close: async () => {} },
+    context: { pages: () => [], on: () => {} },
+  }));
+
+  assert.deepEqual(result.pages, []);
+  assert.equal(runtime.recorderSession, null);
+  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+});
+
+test('BrowserRuntime clears active recorder when recorded page closes', async () => {
+  const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
+  const runtime = new BrowserRuntime('unit-recorder-page-close');
+  const handlers = {};
+  const page = {
+    isClosed: () => false,
+    url: () => 'https://example.test/start',
+    title: async () => 'Start',
+    on: (event, handler) => {
+      handlers[event] = handler;
+    },
+  };
+  const pageId = runtime.adoptPage(page);
+  runtime.recorderSession = {
+    id: 'session-page-close',
+    pageId,
+    startedAt: '2026-06-06T00:00:00.000Z',
+    out: '/tmp/siteflow-page-close-recorder.json',
+    startUrl: 'https://example.test/start',
+    events: [],
+  };
+
+  handlers.close();
+
+  assert.equal(runtime.recorderSession, null);
+  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+});
+
 test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
   const { startRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
   const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-session-isolation-'));
@@ -2661,5 +2729,6 @@ test('workflow command modules are importable after CLI wiring', async () => {
   assert.equal(typeof client.startRecorder, 'function');
   assert.equal(typeof client.stopRecorder, 'function');
   assert.equal(typeof client.runReplayWorkflow, 'function');
+  assert.equal(typeof client.runReplayWorkflowFile, 'function');
   assert.equal(typeof client.exportReplayCli, 'function');
 });

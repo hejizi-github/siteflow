@@ -1,5 +1,6 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { BrowserRuntime } from '../runtime/browser-runtime.js';
@@ -170,6 +171,29 @@ export async function route(
   if (method === 'POST' && url.pathname === '/recorder/stop') {
     const result = await runtime.stopRecorder();
     appendTraceEvent(info().profile, 'recorder.stop', { out: result.out, steps: result.steps, unsupportedEvents: result.unsupportedEvents });
+    return { status: 200, body: { ok: true, data: result } };
+  }
+
+  if (method === 'POST' && url.pathname === '/replay/run-file') {
+    const body = await readJson(req) as { path?: unknown; options?: ReplayRunOptions; pageId?: unknown };
+    if (!body.path || typeof body.path !== 'string') {
+      throw new SiteflowError('MISSING_WORKFLOW_PATH', 'replay run-file requires path');
+    }
+    let workflow: unknown;
+    try {
+      workflow = JSON.parse(await fsp.readFile(body.path, 'utf-8')) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new SiteflowError('BAD_WORKFLOW_JSON', 'Workflow file must be JSON');
+      }
+      throw error;
+    }
+    const replayOptions: ReplayRunOptions = {
+      ...(body.options ?? {}),
+      pageId: parsePageId(body.pageId ?? (body.options as { pageId?: unknown } | undefined)?.pageId),
+    };
+    const result = await runtime.runReplayWorkflow(workflow, replayOptions);
+    appendTraceEvent(info().profile, 'replay.run', { ok: result.ok, steps: result.steps.length, dryRun: replayOptions.dryRun === true, pageId: replayOptions.pageId, workflowPath: body.path });
     return { status: 200, body: { ok: true, data: result } };
   }
 

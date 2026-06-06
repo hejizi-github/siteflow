@@ -259,6 +259,10 @@ export async function runReplayWorkflow(profile: string, workflow: unknown, opti
   return call(profile, 'POST', '/replay/run', { workflow, options });
 }
 
+export async function runReplayWorkflowFile(profile: string, workflowPath: string, options: ReplayRunOptions = {}): Promise<ReplayRunResult> {
+  return call(profile, 'POST', '/replay/run-file', { path: workflowPath, options });
+}
+
 export async function exportReplayCli(profile: string, workflow: unknown): Promise<{ script: string }> {
   return call(profile, 'POST', '/replay/export-cli', { workflow });
 }

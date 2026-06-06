@@ -162,12 +162,19 @@ export class BrowserRuntime {
     return { detached: previousMode === 'cdp-attach', previousMode };
   }
 
+  private clearRecorderSessionForPage(pageId?: number): void {
+    if (pageId === undefined || this.recorderSession?.pageId === pageId) {
+      this.recorderSession = null;
+    }
+  }
+
   async listPages(): Promise<PageInfo[]> {
     await this.ensureLaunched();
     const entries = [...this.pages.entries()];
     const result: PageInfo[] = [];
     for (const [id, page] of entries) {
       if (page.isClosed()) {
+        this.clearRecorderSessionForPage(id);
         this.kernel.removePage(id);
         continue;
       }
@@ -641,6 +648,7 @@ export class BrowserRuntime {
   }
 
   private async resetContext(): Promise<void> {
+    this.clearRecorderSessionForPage();
     if (this.context && this.mode !== 'cdp-attach') {
       await this.context.close().catch(() => {});
     }
@@ -659,6 +667,7 @@ export class BrowserRuntime {
     if (created) {
       this.wirePageObservation(id, page);
       page.on('close', () => {
+        this.clearRecorderSessionForPage(id);
         this.kernel.removePage(id);
       });
     }

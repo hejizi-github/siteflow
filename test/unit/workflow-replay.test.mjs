@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -618,6 +619,122 @@ test('replay route merges leased pageId into replay options', async () => {
   assert.equal(response.body.ok, true);
   assert.deepEqual(receivedWorkflow, workflow);
   assert.deepEqual(receivedOptions, { dryRun: true, pageId: 7 });
+});
+
+test('replay run-file route reads workflow from local path and merges pageId', async () => {
+  const { route } = await import('../../dist/daemon/server.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siteflow-replay-route-file-'));
+  try {
+    const workflow = workflowWithFirstStep({
+      id: 'wait-ready',
+      type: 'wait',
+      ms: 1,
+    });
+    const workflowPath = path.join(dir, 'workflow.json');
+    fs.writeFileSync(workflowPath, JSON.stringify(workflow));
+    let receivedWorkflow;
+    let receivedOptions;
+    const runtime = {
+      async runReplayWorkflow(workflowArg, optionsArg) {
+        receivedWorkflow = workflowArg;
+        receivedOptions = optionsArg;
+        return { ok: true, workflow: { version: 1, steps: 1, startUrl: workflow.startUrl }, steps: [] };
+      },
+    };
+    const req = Readable.from([JSON.stringify({ path: workflowPath, options: { dryRun: true }, pageId: '7' })]);
+    req.method = 'POST';
+    req.url = '/replay/run-file';
+
+    const response = await route(req, runtime, () => ({
+      pid: 1,
+      port: 1,
+      profile: 'unit-replay-route-file',
+      startedAt: '2026-06-06T00:00:00.000Z',
+    }), () => {});
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(receivedWorkflow, workflow);
+    assert.deepEqual(receivedOptions, { dryRun: true, pageId: 7 });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('replay run CLI posts workflow path without reading workflow JSON', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siteflow-replay-cli-file-'));
+  let server;
+  try {
+    const profile = `replay-file-${Date.now()}`;
+    const workflowPath = path.join(dir, 'large-workflow.json');
+    fs.writeFileSync(workflowPath, '{not valid json because cli must not parse it locally');
+    let receivedBody;
+    server = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, data: { profile } }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/replay/run-file') {
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          receivedBody = JSON.parse(raw);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data: { ok: true, workflow: { version: 1, steps: 0, startUrl: 'https://example.test' }, steps: [] } }));
+        });
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const daemonDir = path.join(dir, 'profiles', profile);
+    fs.mkdirSync(daemonDir, { recursive: true });
+    fs.writeFileSync(path.join(daemonDir, 'daemon.json'), JSON.stringify({
+      pid: process.pid,
+      port,
+      profile,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      baseUrl: `http://127.0.0.1:${port}`,
+    }));
+
+    const result = await new Promise(resolve => {
+      const child = spawn(process.execPath, [
+        'dist/cli/main.js',
+        '--json',
+        '--profile',
+        profile,
+        'replay',
+        'run',
+        workflowPath,
+        '--dry-run',
+      ], {
+        cwd: path.resolve(import.meta.dirname, '../..'),
+        env: { ...process.env, SITEFLOW_HOME: dir },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.on('close', status => resolve({ status, stdout, stderr }));
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(receivedBody, {
+      path: workflowPath,
+      options: { dryRun: true, stopBeforeMutating: false },
+    });
+    assert.equal('workflow' in receivedBody, false);
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('replay export-cli runs offline and emits startUrl bootstrap without daemon', () => {

@@ -31,7 +31,7 @@ import {
   startRecorder,
   getRecorderStatus,
   stopRecorder,
-  runReplayWorkflow,
+  runReplayWorkflowFile,
   breakXhr,
   installHook,
   listHooks,
@@ -1085,7 +1085,7 @@ replay
   .action(async function (workflow: string) {
     await run(this, async opts => {
       const local = this.opts<{ dryRun?: boolean; stopBeforeMutating?: boolean }>();
-      return runReplayWorkflow(opts.profile, await readJsonFile(workflow), {
+      return runReplayWorkflowFile(opts.profile, path.resolve(workflow), {
         dryRun: Boolean(local.dryRun),
         stopBeforeMutating: Boolean(local.stopBeforeMutating),
       });
