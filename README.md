@@ -170,6 +170,7 @@ Siteflow 内置了一批站点 adapter，覆盖读取、采集、媒体检查、
 | `suno` | Suno 状态观察和音乐生成 handoff，识别 captcha 状态 |
 | `jimeng` | 即梦生成工作流观察 |
 | `youtube` | YouTube search、video、channel、comments、transcript 提取 |
+| ↳ YouTube 使用与业务验证报告 | [docs/youtube-adapter-usage-report.md](./docs/youtube-adapter-usage-report.md) |
 | `bilibili` | Bilibili search、video metadata、comments、creator probes |
 | `telegram` | 公开频道和本地登录态 chat metadata 工作流 |
 | `github` | GitHub trending、repository、release、issue、search probes |
@@ -254,6 +255,20 @@ siteflow --json auth cookies --domain example.com
 siteflow --json runtime storage
 siteflow --json state save --out state.json
 ```
+
+
+### Browser Session Import
+
+Import cookies and localStorage from a local Chromium browser profile into the active Siteflow profile:
+
+```bash
+siteflow --json auth sources
+siteflow --json auth import-browser
+siteflow --json auth import-browser --domain x.com
+siteflow --json auth import-browser --source chrome:Default --preview
+```
+
+`auth import-browser` defaults to importing all supported cookies and localStorage from the detected default Chromium profile. Use `--domain` to narrow scope. Receipts show counts and domains/origins only; cookie values and localStorage values are never printed.
 
 ## 安全模型
 
