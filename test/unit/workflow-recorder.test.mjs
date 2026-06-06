@@ -1,4 +1,7 @@
 import test from 'node:test';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import * as fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1166,72 +1169,100 @@ test('BrowserRuntime stopRecorder clears session when serialization fails after 
   }
 });
 
-test('BrowserRuntime close clears active recorder session on context reset', async () => {
+test('BrowserRuntime close preserves active recorder session until stop writes it', async () => {
   const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
-  const runtime = new BrowserRuntime('unit-recorder-reset');
-  runtime.recorderSession = {
-    id: 'session-reset',
-    pageId: 1,
-    startedAt: '2026-06-06T00:00:00.000Z',
-    out: '/tmp/siteflow-reset-recorder.json',
-    startUrl: 'https://example.test/start',
-    events: [],
-  };
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-reset-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-reset');
+    runtime.recorderSession = {
+      id: 'session-reset',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
 
-  await runtime.close();
+    await runtime.close();
 
-  assert.equal(runtime.recorderSession, null);
-  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+    assert.equal(runtime.recorderStatus().recording, true);
+    const result = await runtime.stopRecorder();
+    assert.equal(result.out, out);
+    assert.equal(runtime.recorderSession, null);
+    assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
-test('BrowserRuntime attach clears active recorder before adopting attached context', async () => {
+test('BrowserRuntime attach preserves active recorder and blocks new starts until stop', async () => {
   const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
-  const runtime = new BrowserRuntime('unit-recorder-attach-reset');
-  runtime.recorderSession = {
-    id: 'session-attach-reset',
-    pageId: 1,
-    startedAt: '2026-06-06T00:00:00.000Z',
-    out: '/tmp/siteflow-attach-reset-recorder.json',
-    startUrl: 'https://example.test/start',
-    events: [],
-  };
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-attach-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-attach-reset');
+    runtime.recorderSession = {
+      id: 'session-attach-reset',
+      pageId: 1,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
 
-  const result = await runtime.attach('http://127.0.0.1:9222', async () => ({
-    browser: { close: async () => {} },
-    context: { pages: () => [], on: () => {} },
-  }));
+    const result = await runtime.attach('http://127.0.0.1:9222', async () => ({
+      browser: { close: async () => {} },
+      context: { pages: () => [], on: () => {} },
+    }));
 
-  assert.deepEqual(result.pages, []);
-  assert.equal(runtime.recorderSession, null);
-  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+    assert.deepEqual(result.pages, []);
+    assert.equal(runtime.recorderStatus().recording, true);
+    await assert.rejects(
+      () => runtime.startRecorder({ out: path.join(temp, 'next.json') }),
+      error => error.code === 'RECORDER_ALREADY_RUNNING',
+    );
+    await runtime.stopRecorder();
+    assert.equal(runtime.recorderSession, null);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
-test('BrowserRuntime clears active recorder when recorded page closes', async () => {
+test('BrowserRuntime preserves active recorder when recorded page closes', async () => {
   const { BrowserRuntime } = await import('../../dist/runtime/browser-runtime.js');
-  const runtime = new BrowserRuntime('unit-recorder-page-close');
-  const handlers = {};
-  const page = {
-    isClosed: () => false,
-    url: () => 'https://example.test/start',
-    title: async () => 'Start',
-    on: (event, handler) => {
-      handlers[event] = handler;
-    },
-  };
-  const pageId = runtime.adoptPage(page);
-  runtime.recorderSession = {
-    id: 'session-page-close',
-    pageId,
-    startedAt: '2026-06-06T00:00:00.000Z',
-    out: '/tmp/siteflow-page-close-recorder.json',
-    startUrl: 'https://example.test/start',
-    events: [],
-  };
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-page-close-preserve-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const runtime = new BrowserRuntime('unit-recorder-page-close');
+    const handlers = {};
+    const page = {
+      isClosed: () => false,
+      url: () => 'https://example.test/start',
+      title: async () => 'Start',
+      on: (event, handler) => {
+        handlers[event] = handler;
+      },
+    };
+    const pageId = runtime.adoptPage(page);
+    runtime.recorderSession = {
+      id: 'session-page-close',
+      pageId,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/start',
+      events: [],
+    };
 
-  handlers.close();
+    handlers.close();
 
-  assert.equal(runtime.recorderSession, null);
-  assert.deepEqual(runtime.recorderStatus(), { recording: false, events: 0 });
+    assert.equal(runtime.recorderStatus().recording, true);
+    const result = await runtime.stopRecorder();
+    assert.equal(result.out, out);
+    assert.equal(runtime.recorderSession, null);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test('startRecorderSession clears previous active session before new session navigation and reset', async () => {
@@ -2724,6 +2755,86 @@ test('stopRecorderSession writes workflow JSON to nested output directories', as
   }
 });
 
+
+test('recorder start CLI resolves relative output path before daemon request', async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-cli-out-'));
+  let server;
+  try {
+    const profile = `recorder-start-${Date.now()}`;
+    const repoRoot = path.resolve(import.meta.dirname, '../..');
+    const relativeOut = path.join('recordings', 'workflow.json');
+    let receivedBody;
+    server = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, data: { profile } }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/recorder/start') {
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', chunk => { raw += chunk; });
+        req.on('end', () => {
+          receivedBody = JSON.parse(raw);
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data: { recording: true, pageId: 4, events: 0 } }));
+        });
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const daemonDir = path.join(temp, 'profiles', profile);
+    fs.mkdirSync(daemonDir, { recursive: true });
+    fs.writeFileSync(path.join(daemonDir, 'daemon.json'), JSON.stringify({
+      pid: process.pid,
+      port,
+      profile,
+      startedAt: '2026-06-06T00:00:00.000Z',
+      baseUrl: `http://127.0.0.1:${port}`,
+    }));
+
+    const result = await new Promise(resolve => {
+      const child = spawn(process.execPath, [
+        'dist/cli/main.js',
+        '--json',
+        '--profile',
+        profile,
+        'recorder',
+        'start',
+        '--out',
+        relativeOut,
+        '--url',
+        'https://example.test/start',
+        '--page-id',
+        '4',
+      ], {
+        cwd: repoRoot,
+        env: { ...process.env, SITEFLOW_HOME: temp },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.stderr.on('data', chunk => { stderr += chunk; });
+      child.on('close', status => resolve({ status, stdout, stderr }));
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(receivedBody, {
+      out: path.resolve(repoRoot, relativeOut),
+      url: 'https://example.test/start',
+      pageId: 4,
+    });
+  } finally {
+    if (server) await new Promise(resolve => server.close(resolve));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
 test('workflow command modules are importable after CLI wiring', async () => {
   const client = await import('../../dist/daemon/client.js');
   assert.equal(typeof client.startRecorder, 'function');

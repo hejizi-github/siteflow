@@ -1053,7 +1053,7 @@ recorder
       const pageId = local.pageId === undefined ? undefined : Number.parseInt(local.pageId, 10);
       if (local.pageId !== undefined && !Number.isFinite(pageId)) throw new Error('--page-id must be a number');
       return startRecorder(opts.profile, {
-        out: local.out,
+        out: path.resolve(local.out),
         ...(local.url === undefined ? {} : { url: local.url }),
         ...(pageId === undefined ? {} : { pageId }),
       });
