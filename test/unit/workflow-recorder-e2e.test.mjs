@@ -114,6 +114,18 @@ test('records, replays, and exports a browser fixture workflow', async () => {
     assert.ok(replayStepTypes.includes('type'), `replay steps missing type: ${replayStepTypes.join(',')}`);
     assert.ok(replayStepTypes.includes('select'), `replay steps missing select: ${replayStepTypes.join(',')}`);
     assert.ok(replayStepTypes.includes('click'), `replay steps missing click: ${replayStepTypes.join(',')}`);
+    const replayState = assertOk(runSiteflow([
+      'eval',
+      `(() => ({
+        name: document.querySelector('#name')?.value,
+        mode: document.querySelector('#mode')?.value,
+        status: document.querySelector('#status')?.textContent,
+      }))()`,
+    ], { siteflowHome, timeout: 40_000 }).envelope, 'eval replay state').value;
+    assert.equal(replayState.name, 'Alice');
+    assert.equal(replayState.mode, 'Advanced');
+    assert.match(replayState.status, /Continued Alice in Advanced/);
+
 
     const exportResult = assertOk(runSiteflow(['replay', 'export-cli', workflowPath, '--out', scriptPath], { siteflowHome }).envelope, 'replay export-cli');
     assert.equal(exportResult.out, scriptPath);
