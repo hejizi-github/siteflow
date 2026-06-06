@@ -76,6 +76,34 @@ test('runWorkflow dry-run reports steps without executing actions', async () => 
   assert.equal(result.steps[2].ok, true);
 });
 
+test('runWorkflow dry-run ignores stopBeforeMutating and reports all steps ok', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const result = await runWorkflow({
+    open: async () => { throw new Error('open should not run'); },
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => { throw new Error('screenshot should not run'); },
+    scroll: async () => { throw new Error('scroll should not run'); },
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'open', url: 'https://example.com/' },
+      { id: 'step-2', type: 'click', mutating: true, target: { semantic: { text: 'Delete' }, confidence: 'high' } },
+      { id: 'step-3', type: 'screenshot' },
+    ],
+    evidence: {},
+  }, { dryRun: true, stopBeforeMutating: true });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.steps.length, 3);
+  assert.deepEqual(result.steps.map((step) => step.ok), [true, true, true]);
+});
+
 test('runWorkflow executes scroll steps with recorded deltas', async () => {
   const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
   const calls = [];
@@ -305,6 +333,67 @@ test('runWorkflow preserves SiteflowError codes in replay receipts', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.steps.length, 1);
   assert.equal(result.steps[0].error.code, 'TARGET_NOT_FOUND');
+});
+
+test('runWorkflow conditional wait calls driver.waitFor with recorded condition', async () => {
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const calls = [];
+  const result = await runWorkflow({
+    open: async () => ({ id: 1, url: 'https://example.com/', title: 'Example', selected: true }),
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
+    waitFor: async (condition) => {
+      calls.push(condition);
+    },
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'wait', ms: 2500, selector: '#ready', text: 'Ready', urlContains: '/done' },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{ ms: 2500, selector: '#ready', text: 'Ready', urlContains: '/done' }]);
+  assert.deepEqual(result.steps, [{ stepId: 'step-1', type: 'wait', ok: true }]);
+});
+
+test('runWorkflow conditional wait failure preserves SiteflowError code', async () => {
+  const { SiteflowError } = await import('../../dist/shared/errors.js');
+  const { runWorkflow } = await import('../../dist/runtime/replay-runtime.js');
+  const result = await runWorkflow({
+    open: async () => ({ id: 1, url: 'https://example.com/', title: 'Example', selected: true }),
+    click: async () => { throw new Error('click should not run'); },
+    type: async () => { throw new Error('type should not run'); },
+    select: async () => { throw new Error('select should not run'); },
+    screenshot: async () => ({ bytes: 0 }),
+    scroll: async () => { throw new Error('scroll should not run'); },
+    waitFor: async () => {
+      throw new SiteflowError('WAIT_CONDITION_TIMEOUT', 'Timed out waiting for #ready');
+    },
+  }, {
+    version: 1,
+    kind: 'siteflow.workflow',
+    createdAt: '2026-06-05T00:00:00.000Z',
+    startUrl: 'https://example.com/',
+    variables: [],
+    steps: [
+      { id: 'step-1', type: 'wait', selector: '#ready' },
+      { id: 'step-2', type: 'screenshot' },
+    ],
+    evidence: {},
+  }, {});
+
+  assert.equal(result.ok, false);
+  assert.equal(result.steps.length, 1);
+  assert.equal(result.steps[0].error.code, 'WAIT_CONDITION_TIMEOUT');
 });
 
 test('runWorkflow wait defaults to one second', async () => {

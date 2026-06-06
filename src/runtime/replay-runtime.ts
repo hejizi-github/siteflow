@@ -22,6 +22,7 @@ import type {
   ReplayRunResult,
   ReplayStepReceipt,
   SelectWorkflowStep,
+  WaitWorkflowStep,
   SiteflowWorkflow,
   TypeWorkflowStep,
   WorkflowStep,
@@ -34,6 +35,7 @@ export interface ReplayDriver {
   select(options: BrowserSelectOptions): Promise<BrowserActionResult>;
   screenshot(fullPage: boolean): Promise<BrowserScreenshotResult | { bytes: number }>;
   scroll(deltaX: number, deltaY: number): Promise<void>;
+  waitFor?(condition: { ms: number; selector?: string; text?: string; urlContains?: string }): Promise<void>;
 }
 
 function successReceipt(step: WorkflowStep, target?: RecordedTarget): ReplayStepReceipt {
@@ -107,6 +109,19 @@ function selectOptionsFromStep(step: SelectWorkflowStep): BrowserSelectOptions {
   };
 }
 
+function waitHasCondition(step: WaitWorkflowStep): boolean {
+  return step.selector !== undefined || step.text !== undefined || step.urlContains !== undefined;
+}
+
+function waitConditionFromStep(step: WaitWorkflowStep): { ms: number; selector?: string; text?: string; urlContains?: string } {
+  return {
+    ms: step.ms ?? 1000,
+    ...(step.selector === undefined ? {} : { selector: step.selector }),
+    ...(step.text === undefined ? {} : { text: step.text }),
+    ...(step.urlContains === undefined ? {} : { urlContains: step.urlContains }),
+  };
+}
+
 async function runStep(driver: ReplayDriver, step: WorkflowStep): Promise<ReplayStepReceipt> {
   switch (step.type) {
     case 'open':
@@ -122,6 +137,13 @@ async function runStep(driver: ReplayDriver, step: WorkflowStep): Promise<Replay
       await driver.select(selectOptionsFromStep(step));
       return successReceipt(step, step.target);
     case 'wait':
+      if (waitHasCondition(step)) {
+        if (driver.waitFor === undefined) {
+          throw new SiteflowError('REPLAY_WAIT_UNSUPPORTED', 'Replay driver does not support conditional waits.');
+        }
+        await driver.waitFor(waitConditionFromStep(step));
+        return successReceipt(step);
+      }
       await sleep(step.ms ?? 1000);
       return successReceipt(step);
     case 'screenshot':
@@ -142,14 +164,14 @@ export async function runWorkflow(
   const receipts: ReplayStepReceipt[] = [];
 
   for (const step of validated.steps) {
-    if (options.stopBeforeMutating === true && step.mutating === true) {
-      receipts.push(mutatingStopReceipt(step));
-      break;
-    }
-
     if (options.dryRun === true) {
       receipts.push(successReceipt(step, step.target));
       continue;
+    }
+
+    if (options.stopBeforeMutating === true && step.mutating === true) {
+      receipts.push(mutatingStopReceipt(step));
+      break;
     }
 
     const receipt = await runStep(driver, step).catch((error: unknown) => failedReceipt(step, error));
