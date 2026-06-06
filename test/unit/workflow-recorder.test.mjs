@@ -126,19 +126,29 @@ test('validateWorkflow accepts a minimal phase 1 workflow', async () => {
 test('selectPageOption uses native selectOption with value fallback for select elements', async () => {
   const { selectPageOption } = await import('../../dist/runtime/page-actions.js');
   const calls = [];
-  let selectedText = 'United States';
+  let selectedValue = 'US';
+  const labelsByValue = { US: 'United States', CA: 'Canada' };
   const nativeSelect = {
     nth: () => nativeSelect,
     async innerText() {
-      return selectedText;
+      return labelsByValue[selectedValue];
     },
     async evaluate(callback) {
-      return callback({ tagName: 'SELECT' });
+      return callback({
+        tagName: 'SELECT',
+        value: selectedValue,
+        selectedOptions: [{
+          label: labelsByValue[selectedValue],
+          innerText: labelsByValue[selectedValue],
+          textContent: labelsByValue[selectedValue],
+          value: selectedValue,
+        }],
+      });
     },
     async selectOption(option) {
       calls.push(option);
       if (option.label) throw new Error('No option found for label');
-      selectedText = option.value;
+      selectedValue = option.value;
     },
   };
   const page = {
@@ -2426,6 +2436,51 @@ test('Tab and Escape keydowns are counted unsupported when not replayed', async 
     });
 
     assert.equal(result.unsupportedEvents, 2);
+    assert.deepEqual(result.workflow.steps, [
+      { id: 'step-1', type: 'open', url: 'https://example.test/form' },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('unsupported Escape keydown removes immediately preceding click on same target', async () => {
+  const { stopRecorderSession } = await import('../../dist/runtime/recorder-runtime.js');
+  const temp = await mkdtemp(path.join(tmpdir(), 'siteflow-recorder-click-escape-unsupported-'));
+  try {
+    const out = path.join(temp, 'workflow.json');
+    const target = {
+      semantic: { label: 'Country' },
+      structural: { selector: 'select[name="country"]' },
+      confidence: 'high',
+    };
+    const result = await stopRecorderSession({
+      id: 'session-click-escape-unsupported',
+      pageId: 1,
+      startedAt: '2026-06-05T00:00:00.000Z',
+      out,
+      startUrl: 'https://example.test/form',
+      events: [
+        {
+          ts: '2026-06-05T00:00:01.000Z',
+          type: 'click',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+        {
+          ts: '2026-06-05T00:00:02.000Z',
+          type: 'keydown',
+          control: 'select',
+          key: 'Escape',
+          target,
+          url: 'https://example.test/form',
+          title: 'Form',
+        },
+      ],
+    });
+
+    assert.equal(result.unsupportedEvents, 1);
     assert.deepEqual(result.workflow.steps, [
       { id: 'step-1', type: 'open', url: 'https://example.test/form' },
     ]);

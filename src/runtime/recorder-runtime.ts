@@ -306,6 +306,7 @@ function normalizeRecordedEventsWithStats(input: { startUrl: string; events: Rec
           ...(event.mutating === true ? { mutating: true } : {}),
         });
       } else {
+        removePreviousClickIfSameTarget(steps, event.target);
         unsupportedEvents += 1;
       }
       continue;

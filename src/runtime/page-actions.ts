@@ -57,10 +57,8 @@ export async function uploadToPageTarget(page: Page, options: BrowserUploadOptio
 
 export async function selectPageOption(page: Page, options: BrowserSelectOptions): Promise<BrowserElementTarget> {
   const timeout = options.timeoutMs ?? 10_000;
-  const before = await visibleTextForSelectTarget(page, options);
-  const target: BrowserElementTarget = options.selector
-    ? { selector: options.selector, exact: options.exact }
-    : { text: options.comboboxText, exact: options.exact };
+  const before = await nativeSelectSelectionForTarget(page, options) ?? await visibleTextForSelectTarget(page, options);
+  const target = selectTargetFromOptions(options);
   const combo = locatorForTarget(page, target);
   if (await isNativeSelectLocator(combo)) {
     await selectNativeOption(combo, options, timeout);
@@ -140,22 +138,41 @@ async function selectNativeOption(locator: Locator, options: BrowserSelectOption
   }
 }
 
-async function visibleTextForSelectTarget(page: Page, options: BrowserSelectOptions): Promise<string | null> {
-  const target = options.selector
+function selectTargetFromOptions(options: BrowserSelectOptions): BrowserElementTarget {
+  return options.selector
     ? { selector: options.selector, exact: options.exact }
     : { text: options.comboboxText, exact: options.exact };
-  const locator = locatorForTarget(page, target);
+}
+
+interface NativeSelectSelection {
+  label: string | null;
+  value: string | null;
+}
+
+async function nativeSelectSelectionForTarget(page: Page, options: BrowserSelectOptions): Promise<NativeSelectSelection | null> {
+  const locator = locatorForTarget(page, selectTargetFromOptions(options));
   try {
-    const nativeText = await locator.evaluate((element) => {
+    const selection = await locator.evaluate((element) => {
       if (element.tagName.toLowerCase() !== 'select') return null;
       const select = element as HTMLSelectElement;
       const option = select.selectedOptions[0];
-      return option?.label || option?.innerText || option?.textContent || select.value || null;
+      return {
+        label: option?.label || option?.innerText || option?.textContent || null,
+        value: select.value || option?.value || null,
+      };
     });
-    if (typeof nativeText === 'string') return nativeText.replace(/\s+/g, ' ').trim();
+    if (!selection) return null;
+    const label = normalizeSelectText(selection.label);
+    const value = normalizeSelectText(selection.value);
+    return label || value ? { label, value } : null;
   } catch {
-    // Non-native comboboxes may not support DOM evaluation; fall back to visible text.
+    return null;
   }
+}
+
+async function visibleTextForSelectTarget(page: Page, options: BrowserSelectOptions): Promise<string | null> {
+  const target = selectTargetFromOptions(options);
+  const locator = locatorForTarget(page, target);
   try {
     const text = await locator.innerText({ timeout: 1000 });
     return text.replace(/\s+/g, ' ').trim();
@@ -175,17 +192,43 @@ async function clickVisibleOption(page: Page, options: BrowserSelectOptions, tim
   await page.mouse.click(point.x, point.y);
 }
 
+function normalizeSelectText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized || null;
+}
+
+function nativeSelectionMatches(selection: NativeSelectSelection, expected: string): boolean {
+  return Boolean(selection.label?.includes(expected) || selection.value === expected);
+}
+
+function nativeSelectionChanged(selection: NativeSelectSelection, before: NativeSelectSelection | string | null): boolean {
+  if (!before) return true;
+  if (typeof before === 'string') return selection.label !== before && selection.value !== before;
+  return selection.label !== before.label || selection.value !== before.value;
+}
+
+function genericSelectionChanged(current: string, before: NativeSelectSelection | string | null): boolean {
+  if (!before) return true;
+  if (typeof before === 'string') return current !== before;
+  return current !== before.label && current !== before.value;
+}
+
 async function waitForSelectPostcondition(
   page: Page,
   options: BrowserSelectOptions,
-  before: string | null,
+  before: NativeSelectSelection | string | null,
   timeout: number,
 ): Promise<boolean> {
   const deadline = Date.now() + timeout;
   const expected = options.option.replace(/\s+/g, ' ').trim();
   while (Date.now() < deadline) {
+    const nativeSelection = await nativeSelectSelectionForTarget(page, options);
+    if (nativeSelection && nativeSelectionMatches(nativeSelection, expected) && nativeSelectionChanged(nativeSelection, before)) {
+      return true;
+    }
     const current = await visibleTextForSelectTarget(page, options);
-    if (current && current.includes(expected) && current !== before) return true;
+    if (current && current.includes(expected) && genericSelectionChanged(current, before)) return true;
     const visibleComboboxTexts = await page.locator('[role=combobox]').filter({ visible: true }).allInnerTexts().catch(() => []);
     if (visibleComboboxTexts.some(text => text.replace(/\s+/g, ' ').trim().includes(expected))) return true;
     await page.waitForTimeout(100);
