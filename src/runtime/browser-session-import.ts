@@ -207,13 +207,36 @@ export async function createPrivateTempDir(prefix = 'siteflow-browser-import-'):
   return dir;
 }
 
+const BLACKLISTED_PATHS = [
+  'SingletonLock', 'SingletonSocket', 'SingletonCookie',
+  'OptGuideOnDeviceModel', 'optimization_guide_model_and_features_store',
+  'optimization_guide_model_store', 'OptGuideOnDeviceClassifierModel',
+  'ShaderCache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'DawnGraphiteCache',
+  'GraphiteDawnCache', 'Cache', 'blob_storage', 'File System', 'Thumbnails', 'Snapshots',
+  'Service Worker', 'Session Storage', 'IndexedDB', 'WebStorage',
+  'crx_cache', 'component_crx_cache',
+  'Extensions', 'Platform Notifications', 'shared_proto_db',
+  'Visited Links', 'History', 'History Provider Cache', 'Top Sites',
+  'Web Data', 'WebAssistDatabase', 'Affiliation Database',
+  'Login Data', 'Network Action Predictor', 'BudgetDatabase',
+  'Feature Engagement Tracker', 'Segmentation Platform',
+  'WasmTtsEngine', 'Safe Browsing', 'CertificateRevocation',
+  'Crashpad', 'MEIPreload', 'OnDeviceHeadSuggestModel',
+];
+
+function isBlacklisted(filePath: string): boolean {
+  return BLACKLISTED_PATHS.some(blacklisted =>
+    filePath.includes(blacklisted) || filePath.includes(blacklisted.replace(/ /g, '_')),
+  );
+}
+
 export async function copyUserDataSnapshot(source: BrowserSessionSource, tempRoot: string): Promise<string> {
   const destination = path.join(tempRoot, `${source.browser}-${source.profile.replace(/[^a-zA-Z0-9._-]/g, '_')}`);
   await fsp.cp(source.userDataDir, destination, {
     recursive: true,
     force: true,
     errorOnExist: false,
-    filter: file => !file.includes('SingletonLock') && !file.includes('SingletonSocket') && !file.includes('SingletonCookie'),
+    filter: file => !isBlacklisted(file),
   });
   return destination;
 }
