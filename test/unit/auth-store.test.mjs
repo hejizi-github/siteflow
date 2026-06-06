@@ -92,3 +92,71 @@ test('prepareCookieImport previews and filters invalid cookies', () => {
     note: 'Preview only. Re-run with --apply to import cookies into the active profile.',
   });
 });
+
+test('prepareCookieImport filters out cookies missing required fields', () => {
+  const result = prepareCookieImport([
+    { name: 'ok', value: 'v', domain: '.x.com', path: '/' },
+    { name: '', value: 'v', domain: '.x.com', path: '/' },
+    { name: 'n', value: '', domain: '.x.com', path: '/' },
+    { name: 'n', value: 'v', domain: '', path: '/' },
+    { name: 'n', value: 'v', domain: '.x.com', path: '' },
+  ], 'x.com', false);
+
+  assert.equal(result.filtered.length, 1);
+  assert.deepEqual(result.filtered[0], { name: 'ok', value: 'v', domain: '.x.com', path: '/' });
+});
+
+test('prepareCookieImport handles empty cookie arrays', () => {
+  const result = prepareCookieImport([], 'x.com', false);
+
+  assert.equal(result.filtered.length, 0);
+  assert.deepEqual(result.result, {
+    imported: false,
+    count: 0,
+    domains: [],
+    source: 'file',
+    note: 'Preview only. Re-run with --apply to import cookies into the active profile.',
+  });
+});
+
+test('prepareCookieImport with apply=true creates imported receipt', () => {
+  const result = prepareCookieImport([
+    { name: 'session', value: 'abc', domain: '.x.com', path: '/' },
+  ], 'x.com', true);
+
+  assert.equal(result.filtered.length, 1);
+  assert.deepEqual(result.result, {
+    imported: true,
+    count: 1,
+    domains: ['.x.com'],
+    source: 'file',
+    note: 'Cookies imported into the active browser context.',
+  });
+});
+
+test('prepareCookieImport throws on non-array input', () => {
+  assert.throws(
+    () => prepareCookieImport('not-an-array', 'x.com', false),
+    (err) => {
+      assert.equal(err.code, 'BAD_COOKIE_FILE');
+      assert.equal(err.message, 'Cookie file must contain a cookie array');
+      return true;
+    },
+  );
+
+  assert.throws(
+    () => prepareCookieImport(null, 'x.com', false),
+    (err) => {
+      assert.equal(err.code, 'BAD_COOKIE_FILE');
+      return true;
+    },
+  );
+
+  assert.throws(
+    () => prepareCookieImport(undefined, 'x.com', false),
+    (err) => {
+      assert.equal(err.code, 'BAD_COOKIE_FILE');
+      return true;
+    },
+  );
+});
