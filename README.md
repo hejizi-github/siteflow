@@ -229,6 +229,24 @@ siteflow --json request curl <id>
 siteflow --json request replay <id>
 ```
 
+### Workflow Recorder
+
+```bash
+siteflow --json recorder start --url https://example.com --out flow.json
+# operate the browser manually or through Siteflow browser commands
+siteflow --json recorder stop
+siteflow --json replay run flow.json
+siteflow --json replay export-cli flow.json --out flow.sh
+```
+
+Workflow JSON stores replayable intent and lightweight evidence. It does not store cookies, full DOM dumps, or raw network bodies.
+
+Smoke check:
+
+```bash
+npm run smoke:recorder
+```
+
 ### Debugger
 
 ```bash

@@ -25,7 +25,8 @@
     "pack:local": "npm pack",
     "start": "node dist/cli/main.js",
     "smoke:fixture": "npm run build && node test/smoke/fixture-smoke.mjs",
-    "smoke:auth-import-browser": "npm run build && node --test test/smoke/auth-import-browser-smoke.mjs"
+    "smoke:auth-import-browser": "npm run build && node --test test/smoke/auth-import-browser-smoke.mjs",
+    "smoke:recorder": "npm run build && node --test test/smoke/workflow-recorder-e2e.mjs"
   },
   "keywords": [
     "browser",
