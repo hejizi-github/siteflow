@@ -24,7 +24,8 @@
     "prepack": "npm run build",
     "pack:local": "npm pack",
     "start": "node dist/cli/main.js",
-    "smoke:fixture": "npm run build && node test/smoke/fixture-smoke.mjs"
+    "smoke:fixture": "npm run build && node test/smoke/fixture-smoke.mjs",
+    "smoke:auth-import-browser": "npm run build && node --test test/smoke/auth-import-browser-smoke.mjs"
   },
   "keywords": [
     "browser",

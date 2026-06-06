@@ -62,7 +62,7 @@ import {
   writeFailureReceipt,
 } from '../traces/artifact-store.js';
 import { printError, printSuccess, type OutputOptions } from './output.js';
-import type { CookieRecord, NetworkBody, NetworkEntry, TraceEvent } from '../shared/types.js';
+import type { CookieRecord, NetworkBody, NetworkEntry, StorageImportResult, TraceEvent } from '../shared/types.js';
 import { registerSiteCommands } from '../sites/registry.js';
 
 interface GlobalOptions {
@@ -960,7 +960,7 @@ auth
         : local.domain
           ? { mode: 'domain', domain: local.domain }
           : { mode: 'summary-only', cookieCount: cookieResult.count, storageOrigins: storageResult.origins };
-      return buildBrowserImportReceipt({
+      const receipt = buildBrowserImportReceipt({
         preview: false,
         source: source.id,
         domain: local.domain,
@@ -969,6 +969,8 @@ auth
         importedStorage: { origins: storageResult.origins, keys: storageResult.keys },
         verification,
       });
+      receipt.ok = cookieResult.imported && (local.cookiesOnly || (storageResult as StorageImportResult).imported);
+      return receipt;
     });
   });
 
