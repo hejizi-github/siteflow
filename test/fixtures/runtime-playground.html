@@ -10,6 +10,9 @@
   button, input, select, textarea { margin: 4px; padding: 6px 12px; }
   .notice { color: green; font-weight: bold; }
   .spacer { height: 200vh; }
+  #hidden-div { display: none; }
+  #visible-after { opacity: 0; transition: opacity 0.1s; }
+  #visible-after.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -21,6 +24,8 @@
   <button class="btn-class">Button by Class</button>
   <button aria-label="Aria Label Button">Aria Button</button>
   <button>Text Match Button</button>
+  <button id="delayed-btn" onclick="setTimeout(()=>{document.querySelector('#visible-after').classList.add('show')},100)">Show Hidden</button>
+  <div id="visible-after">Post-click element</div>
   <div id="click-output" class="notice"></div>
 </section>
 
@@ -50,16 +55,17 @@
 
 <section id="scroll-area">
   <h2>Scroll Test</h2>
-  <p>Scroll down to find marker.</p>
   <div class="spacer"></div>
-  <p id="scroll-marker" class="notice">Scroll marker found!</p>
+  <p id="scroll-marker" class="notice">Scroll marker!</p>
 </section>
 
-<section id="console-network">
-  <h2>Console & Network</h2>
+<section id="network-area">
+  <h2>Network Triggers</h2>
   <button id="log-btn">console.log</button>
+  <button id="warn-btn">console.warn</button>
   <button id="error-btn">console.error</button>
   <button id="fetch-btn">fetch /api/test</button>
+  <button id="xhr-btn">XHR /api/xhr</button>
   <div id="network-output" class="notice"></div>
 </section>
 
@@ -71,48 +77,19 @@
 </section>
 
 <script>
-  document.querySelector('#btn-by-id').addEventListener('click', () => {
-    document.querySelector('#click-output').textContent = 'btn-by-id clicked';
-  });
-  document.querySelector('.btn-class').addEventListener('click', () => {
-    document.querySelector('#click-output').textContent = 'btn-class clicked';
-  });
-  document.querySelector('[aria-label="Aria Label Button"]').addEventListener('click', () => {
-    document.querySelector('#click-output').textContent = 'aria clicked';
-  });
-  document.querySelectorAll('button').forEach(btn => {
-    if (btn.textContent.trim() === 'Text Match Button') {
-      btn.addEventListener('click', () => {
-        document.querySelector('#click-output').textContent = 'text match clicked';
-      });
-    }
-  });
-  const ti = document.querySelector('#text-input');
-  ti.addEventListener('input', () => {
-    document.querySelector('#type-output').textContent = 'value: ' + ti.value;
-  });
-  document.querySelector('#native-select').addEventListener('change', e => {
-    document.querySelector('#select-output').textContent = 'selected: ' + e.target.value;
-  });
-  document.querySelector('#log-btn').addEventListener('click', () => {
-    console.log('hello from fixture');
-  });
-  document.querySelector('#error-btn').addEventListener('click', () => {
-    console.error('test error from fixture');
-  });
-  document.querySelector('#fetch-btn').addEventListener('click', async () => {
-    try { await fetch('/api/test'); } catch (e) {
-      document.querySelector('#network-output').textContent = 'fetch attempted';
-    }
-  });
-  document.querySelector('#set-storage').addEventListener('click', () => {
-    localStorage.setItem('fixture-key', 'fixture-value');
-    document.querySelector('#storage-output').textContent = 'set';
-  });
-  document.querySelector('#clear-storage').addEventListener('click', () => {
-    localStorage.clear();
-    document.querySelector('#storage-output').textContent = 'cleared';
-  });
+document.querySelector('#btn-by-id').addEventListener('click',()=>{document.querySelector('#click-output').textContent='btn-by-id clicked';});
+document.querySelector('.btn-class').addEventListener('click',()=>{document.querySelector('#click-output').textContent='btn-class clicked';});
+document.querySelector('[aria-label="Aria Label Button"]').addEventListener('click',()=>{document.querySelector('#click-output').textContent='aria clicked';});
+document.querySelectorAll('button').forEach(b=>{if(b.textContent.trim()==='Text Match Button')b.addEventListener('click',()=>{document.querySelector('#click-output').textContent='text match clicked';});});
+document.querySelector('#text-input').addEventListener('input',e=>{document.querySelector('#type-output').textContent='value: '+e.target.value;});
+document.querySelector('#native-select').addEventListener('change',e=>{document.querySelector('#select-output').textContent='selected: '+e.target.value;});
+document.querySelector('#log-btn').addEventListener('click',()=>{console.log('hello from fixture');});
+document.querySelector('#warn-btn').addEventListener('click',()=>{console.warn('warn from fixture');});
+document.querySelector('#error-btn').addEventListener('click',()=>{console.error('error from fixture');});
+document.querySelector('#fetch-btn').addEventListener('click',async()=>{try{let r=await fetch('/api/test');document.querySelector('#network-output').textContent='fetch '+r.status;}catch(e){document.querySelector('#network-output').textContent='fetch attempted';}});
+document.querySelector('#xhr-btn').addEventListener('click',()=>{let x=new XMLHttpRequest();x.open('GET','/api/xhr');x.send();x.onload=()=>{document.querySelector('#network-output').textContent='xhr '+x.status;};x.onerror=()=>{document.querySelector('#network-output').textContent='xhr attempted';};});
+document.querySelector('#set-storage').addEventListener('click',()=>{localStorage.setItem('fixture-key','fixture-value');localStorage.setItem('k2','v2');document.querySelector('#storage-output').textContent='set';});
+document.querySelector('#clear-storage').addEventListener('click',()=>{localStorage.clear();document.querySelector('#storage-output').textContent='cleared';});
 </script>
 </body>
 </html>
