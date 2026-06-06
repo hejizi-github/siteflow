@@ -548,6 +548,11 @@ export class BrowserRuntime {
       const page = await this.context!.newPage();
       try {
         await page.goto(record.origin, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        const currentUrl = page.url();
+        if (new URL(currentUrl).origin !== new URL(record.origin).origin) {
+          failures.push({ origin: record.origin, code: 'STORAGE_IMPORT_ORIGIN_MISMATCH', message: `Redirected to ${currentUrl}` });
+          continue;
+        }
         await page.evaluate(values => {
           for (const [key, value] of Object.entries(values)) localStorage.setItem(key, String(value));
         }, record.localStorage || {});
